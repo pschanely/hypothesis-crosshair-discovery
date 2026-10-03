@@ -6,7 +6,18 @@ on:
   pull_request:
 
 jobs:
-  lint-and-test:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      - run: uv sync --group lint
+      - run: uv run black --check .
+      - run: uv run isort --check-only .
+
+  test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -18,6 +29,4 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - run: uv sync
-      - run: uv run black --check .
-      - run: uv run isort --check-only .
       - run: uv run pytest
