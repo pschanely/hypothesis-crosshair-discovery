@@ -1,4 +1,5 @@
 import pytest
+
 from discovery.classify import (
     Stability,
     baseline_gate,

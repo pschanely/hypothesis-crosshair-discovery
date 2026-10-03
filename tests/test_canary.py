@@ -6,6 +6,7 @@ the very doubt it exists to hold open.
 """
 
 import pytest
+
 from discovery.canary import (
     CanaryResult,
     Expectation,

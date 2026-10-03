@@ -1,0 +1,54 @@
+[project]
+name = "hypothesis-crosshair-discovery"
+version = "0.1.0"
+description = "Finds bugs that only CrossHair's solver reaches, in third-party Hypothesis test suites."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+
+# The orchestrator is standard library only. It never imports the code it
+# studies: it builds environments, runs pytest in them, and reads what comes
+# back. hypothesis and the plugin belong in the target environments, which
+# `provision` installs, and in the dev environment below so the tests can
+# exercise a real run.
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "hypothesis",
+    "hypothesis-crosshair",
+    "black",
+    "isort",
+]
+
+[project.scripts]
+discovery = "discovery.cli:main"
+discovery-probe = "discovery.probe_cli:main"
+discovery-provision = "discovery.provision_cli:main"
+discovery-candidates = "discovery.candidates_cli:main"
+discovery-canary = "discovery.canary_cli:main"
+discovery-eval = "discovery.evaluate_cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["discovery*"]
+
+[tool.black]
+# The floor in requires-python; without it black targets the running
+# interpreter and formats differently across the CI matrix.
+target-version = ["py39"]
+
+[tool.isort]
+profile = "black"
+skip_gitignore = true
+line_length = 88
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+# The demo project under here fails on purpose; it is input, not a suite.
+norecursedirs = ["tests/fixtures"]

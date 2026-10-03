@@ -5,6 +5,7 @@ these assert the wiring itself.
 """
 
 import pytest
+
 from discovery.model import Arm, Outcome, RunResult, Tier
 from discovery.pipeline import Pipeline, PipelineConfig
 from discovery.runner import EnvSpec
