@@ -9,6 +9,7 @@ import os
 import sys
 
 import pytest
+
 from discovery.model import Verdict
 from discovery.pipeline import Pipeline, PipelineConfig
 from discovery.runner import EnvSpec, Runner

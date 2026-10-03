@@ -1,10 +1,17 @@
-# Discovery pipeline (stages 1-3)
+# hypothesis-crosshair-discovery
 
-Runs a third-party project's Hypothesis tests under `backend="crosshair"` and
-classifies what comes out. Implements stages 1-3 of
-[`docs/discovery-agent-design.md`](../../docs/discovery-agent-design.md):
-sandboxed collection, the baseline gate, two-tier execution with telemetry, and
-the three-way differential classifier.
+Finds bugs that only CrossHair's solver reaches, in other people's Hypothesis
+test suites.
+
+It takes candidate projects, builds an environment for each, runs their
+property tests three ways -- on Hypothesis's own generator, on
+`backend="crosshair"`, and again in a clean room without the plugin -- and
+classifies what comes out. A finding is only a finding when the baseline
+misses it, the solver catches it, and it still reproduces with the plugin
+absent.
+
+See [`docs/discovery-agent-design.md`](docs/discovery-agent-design.md) for the
+design and [`docs/backlog.md`](docs/backlog.md) for what has been measured.
 
 Deterministic end to end. No model is involved in any decision this code makes.
 
@@ -241,8 +248,16 @@ defect.
 ## Tests
 
 ```
-PYTHONPATH=. python -m pytest
+uv sync
+uv run pytest
+uv run python -m mutation      # every suite, or name one: ... -m mutation harness
 ```
+
+The mutation suites are not optional. A test that cannot fail is not a test,
+so each module has a companion suite that breaks the code deliberately and
+checks the tests object. They have found several tests that passed for the
+wrong reason, and a stale anchor is reported as a failure rather than
+skipped.
 
 The end-to-end test against `tests/fixtures/demoproj` is skipped unless
 `DISCOVERY_VALIDATION_PYTHON` points at an interpreter without the plugin:

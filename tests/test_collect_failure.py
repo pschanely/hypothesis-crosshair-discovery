@@ -4,6 +4,7 @@ import json
 import os
 
 import pytest
+
 from discovery.runner import CollectionFailed, EnvSpec, Runner
 from discovery.sandbox import ExecResult
 

@@ -6,7 +6,7 @@ import os
 import sys
 from typing import List, Optional
 
-from .provision import provision
+from .provision import DEFAULT_PLUGIN, provision
 from .sandbox import DockerSandbox, LocalSandbox, Sandbox
 
 
@@ -26,7 +26,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("projects", nargs="+", help="project checkouts")
     parser.add_argument(
-        "--plugin", default=os.getcwd(), help="checkout of hypothesis-crosshair"
+        "--plugin",
+        default=DEFAULT_PLUGIN,
+        help=(
+            "the hypothesis-crosshair requirement to install into each "
+            "environment: a released version by default, or a git specifier "
+            "or checkout to test an unreleased change"
+        ),
     )
     parser.add_argument("--sandbox", choices=("docker", "local"), default="docker")
     parser.add_argument("--image", default="python:3.12-slim")
@@ -48,7 +54,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         done = provision(
             sandbox,
             project,
-            os.path.abspath(args.plugin),
+            os.path.abspath(args.plugin) if os.path.isdir(args.plugin) else args.plugin,
             venv_dir=os.path.join(project, args.venv_name),
             python_version=args.python_version,
             extra_packages=args.package,

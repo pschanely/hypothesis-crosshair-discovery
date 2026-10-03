@@ -513,11 +513,13 @@ def assess(found: Survey) -> Assessment:
         Signal(
             "pure_python",
             0.0 if found.native_markers else 1.0,
-            _touching_detail(
-                len(found.native_markers), "sign(s) of a compiled extension"
-            )
-            if found.native_markers
-            else "none",
+            (
+                _touching_detail(
+                    len(found.native_markers), "sign(s) of a compiled extension"
+                )
+                if found.native_markers
+                else "none"
+            ),
         ),
         Signal(
             "domain_strategies",

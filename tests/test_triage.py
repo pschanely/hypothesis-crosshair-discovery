@@ -6,6 +6,7 @@ allowed to do.
 """
 
 import pytest
+
 from discovery.cluster import Cluster, Signature
 from discovery.store import Store
 from discovery.triage import (

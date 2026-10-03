@@ -49,8 +49,7 @@ class Sandbox(ABC):
         env: Optional[Dict[str, str]] = None,
         network: bool = False,
         limits: Optional[Limits] = None,
-    ) -> ExecResult:
-        ...
+    ) -> ExecResult: ...
 
 
 def _truncate(text: str, limit: int) -> str:

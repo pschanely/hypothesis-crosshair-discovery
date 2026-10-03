@@ -12,6 +12,7 @@ import sys
 import textwrap
 
 import pytest
+
 from discovery import telemetry
 from discovery.model import SearchProgress
 from discovery.runner import _read_search
@@ -93,9 +94,7 @@ def test_probe_reports_progress_from_a_real_solver_run(tmp_path):
     probe reads private provider attributes that a stub cannot vouch for.
     """
     pytest.importorskip("hypothesis_crosshair_provider")
-    (tmp_path / "test_probe_sample.py").write_text(
-        textwrap.dedent(
-            """
+    (tmp_path / "test_probe_sample.py").write_text(textwrap.dedent("""
             from hypothesis import given, strategies as st
 
             def stairs(n):
@@ -109,9 +108,7 @@ def test_probe_reports_progress_from_a_real_solver_run(tmp_path):
             @given(st.integers())
             def test_stairs(n):
                 assert stairs(n) <= 2
-            """
-        )
-    )
+            """))
     report = tmp_path / "report.json"
     env = dict(
         os.environ,

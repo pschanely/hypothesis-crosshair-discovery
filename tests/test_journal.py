@@ -5,6 +5,7 @@ resume path itself: what is skipped, what is run again, and what is given up on.
 """
 
 import pytest
+
 from discovery.cli import _Journal, _run_per_test
 from discovery.model import (
     Arm,

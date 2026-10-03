@@ -8,7 +8,12 @@ to review.
 from typing import Dict, List, Optional, Sequence
 
 from discovery.harness import MAX_REPAIRS
-from discovery.provision import Provisioned, provision, venv_python
+from discovery.provision import (
+    Provisioned,
+    plugin_argv,
+    provision,
+    venv_python,
+)
 from discovery.sandbox import ExecResult, Limits, Sandbox
 
 
@@ -54,9 +59,9 @@ BENCHMARK_FAILURE = (
 DESELECTED = "7 deselected in 0.2s\n"
 
 
-def run_provision(answers, **kw):
+def run_provision(answers, plugin="hypothesis-crosshair", **kw):
     sandbox = FakeSandbox(answers)
-    result = provision(sandbox, "/proj", "/plugin", venv_dir="/proj/.venv", **kw)
+    result = provision(sandbox, "/proj", plugin, venv_dir="/proj/.venv", **kw)
     return result, sandbox
 
 
@@ -72,7 +77,8 @@ def test_a_clean_project_provisions_without_repairs():
 def test_the_project_and_the_plugin_are_both_installed():
     _, sandbox = run_provision([ok(), ok(), ok(COLLECTED)])
     install = sandbox.calls[1]["argv"]
-    assert "-e" in install and "/proj" in install and "/plugin" in install
+    assert "-e" in install and "/proj" in install
+    assert "hypothesis-crosshair" in install
     assert "pytest" in install and "hypothesis" in install
 
 
@@ -191,7 +197,7 @@ def test_a_project_whose_build_fails_is_run_against_its_checkout():
     assert "-e" in sandbox.calls[1]["argv"], "the first attempt installs the project"
     retry = sandbox.calls[2]["argv"]
     assert "/proj" not in retry, "the retry leaves the project out"
-    assert "/plugin" in retry and "pytest" in retry
+    assert "hypothesis-crosshair" in retry and "pytest" in retry
 
 
 def test_a_checkout_that_still_cannot_collect_reports_the_build_failure():
@@ -213,3 +219,29 @@ def test_both_installs_failing_reports_the_first_error():
     )
     assert not result.ready
     assert "build backend exploded" in result.error
+
+
+def test_a_released_plugin_is_installed_as_a_requirement():
+    """A run measures what users get, not whatever is in a working tree."""
+    _, sandbox = run_provision([ok(), ok(), ok(COLLECTED)])
+    install = sandbox.calls[1]["argv"]
+    assert "hypothesis-crosshair" in install
+    assert install.count("-e") == 1, "only the project under test is editable"
+
+
+def test_a_git_specifier_is_passed_through_unchanged():
+    spec = "hypothesis-crosshair @ git+https://github.com/pschanely/x@abc123"
+    _, sandbox = run_provision([ok(), ok(), ok(COLLECTED)], plugin=spec)
+    assert spec in sandbox.calls[1]["argv"]
+
+
+def test_a_checkout_is_installed_editable(tmp_path):
+    _, sandbox = run_provision([ok(), ok(), ok(COLLECTED)], plugin=str(tmp_path))
+    install = sandbox.calls[1]["argv"]
+    assert install.count("-e") == 2, "the project and the plugin checkout"
+    assert str(tmp_path) in install
+
+
+def test_plugin_argv_distinguishes_a_path_from_a_specifier(tmp_path):
+    assert plugin_argv("hypothesis-crosshair") == ["hypothesis-crosshair"]
+    assert plugin_argv(str(tmp_path)) == ["-e", str(tmp_path)]

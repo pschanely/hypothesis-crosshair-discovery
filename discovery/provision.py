@@ -28,6 +28,11 @@ INSTALL_ARGV = ("uv", "pip", "install", "--quiet", "--python")
 #: Always needed, whatever the project asks for.
 BASE_PACKAGES = ("pytest", "hypothesis")
 
+#: The plugin installed into each target environment. A released version by
+#: default, so a run measures what users actually get rather than a working
+#: tree; pass a git specifier or a checkout to test an unreleased change.
+DEFAULT_PLUGIN = "hypothesis-crosshair"
+
 #: Recorded when the project's own build fails and its tests are run against
 #: the checkout instead. Some suites are written for that and never install.
 RUN_FROM_CHECKOUT = "run-from-checkout"
@@ -70,6 +75,16 @@ def venv_python(venv_dir: str) -> str:
     return os.path.join(venv_dir, "bin", "python")
 
 
+def plugin_argv(requirement: str) -> List[str]:
+    """Install arguments for a plugin requirement.
+
+    A directory is installed editable, so a working tree is picked up as it
+    changes. Anything else is passed through as a requirement specifier,
+    which covers both a released version and a git reference.
+    """
+    return ["-e", requirement] if os.path.isdir(requirement) else [requirement]
+
+
 def _collected_count(text: str) -> int:
     found = _COLLECTED_RE.search(text)
     return int(found.group("count")) if found else 0
@@ -109,7 +124,7 @@ def _collect(
 def provision(
     sandbox: Sandbox,
     project_dir: str,
-    plugin_dir: str,
+    plugin: str = DEFAULT_PLUGIN,
     venv_dir: Optional[str] = None,
     python_version: str = "3.12",
     extra_packages: Sequence[str] = (),
@@ -134,7 +149,7 @@ def provision(
         result.error = f"could not create a virtual environment: {made.stderr[-300:]}"
         return result
 
-    everything = [*BASE_PACKAGES, "-e", plugin_dir, *extra_packages]
+    everything = [*BASE_PACKAGES, *plugin_argv(plugin), *extra_packages]
     installed, detail = _install(
         sandbox, result.python, ["-e", project_dir, *everything], project_dir, {}
     )
