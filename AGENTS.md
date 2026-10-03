@@ -13,8 +13,13 @@ memory, written as each thing was measured.
 ## Dev setup
 
 ```
-uv sync
+uv sync --group lint
 ```
+
+The formatters are pinned in their own group, because black's output changes
+between releases and the test matrix reaches back to 3.9, where the resolver
+picks an older one. CI lints on a single interpreter with those exact
+versions and runs the tests everywhere.
 
 ## Checks
 
@@ -24,6 +29,7 @@ Run all four before committing.
 uv run black --check .      # uv run black . to fix
 uv run isort --check-only .
 uv run pytest
+uv run python -m mutation
 ```
 
 Mutation suites are the fourth. A test that cannot fail is not a test, so

@@ -18,8 +18,17 @@ dev = [
     "pytest",
     "hypothesis",
     "hypothesis-crosshair",
-    "black",
-    "isort",
+]
+# Pinned, and separate from dev, because a formatter's output changes between
+# releases and the test matrix reaches back to 3.9 -- where the resolver picks
+# an older black that disagrees with a newer one about the same file. Lint runs
+# on one interpreter with these exact versions; tests run everywhere.
+# The markers are not incidental: the pins are what make CI and a developer
+# agree, and these releases need 3.10. Lint runs on one modern interpreter;
+# on 3.9 the group resolves to nothing and only the tests run.
+lint = [
+    "black==26.5.1; python_version >= '3.10'",
+    "isort==9.0.2; python_version >= '3.10'",
 ]
 
 [project.scripts]
