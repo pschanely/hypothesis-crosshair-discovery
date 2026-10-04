@@ -1842,3 +1842,61 @@ both the same kind as B36's. `safe_name` had three guards where the second
 was subsumed by the third on every platform this runs on, and a
 `SEPARATORS` tuple generalised over `os.altsep` that is `None` here. Both
 collapsed into one condition that every mutation of reaches a test.
+
+## B44. The repair that had to be allowed to repeat
+
+pydantic would not provision, and the reason was not the one it looked like.
+Its suite is missing five test dependencies -- `pytest-examples`,
+`inline-snapshot`, `pytz`, `time-machine`, `pytest-mock` -- and
+`install-missing-import` existed already. Three separate limits stopped it.
+
+**It read one module.** `diagnose` took the first `ModuleNotFoundError` and
+offered a repair for that distribution alone. Five missing dependencies
+needed five rounds.
+
+**A repair is offered once per project.** That rule stops a repair that did
+not work from looping, and it is right for everything else, but it makes a
+per-package repair useless after its first application: one package
+installed, four still missing, escalate.
+
+**Missing imports emerge in waves.** This is the part that no amount of
+collecting modules in one pass fixes. `tests/pydantic_core/test_errors.py`
+imports `pytest_examples` and then `inline_snapshot`; the second is
+invisible until the first is installed. A collection reports what each
+module failed on *first*, so the set of missing dependencies is only fully
+known after installing some of them.
+
+So the repair now gathers every missing module in one pass, and `plan`
+offers a repair again when it would install something not installed yet.
+Termination still holds: each repeat installs at least one new package, and
+`MAX_REPAIRS` bounds the rounds regardless. Raised from 3 to 6, because
+pydantic needs four -- configured plugins, a marker plugin, and two rounds
+of imports -- and 3 was a guess made before any project had been seen to
+need more than two.
+
+**Where a distribution name may come from.** `MODULE_DISTRIBUTIONS` is an
+allowlist precisely because `import foo` does not mean `pip install foo`;
+resolving one to the other by spelling installs whatever happens to hold
+that name on PyPI. Rather than growing the allowlist for each new project,
+an unmapped module is now installed when the project's *own* configuration
+names that distribution -- a confirmation, not a guess. The declaration scan
+reads `pyproject.toml`, `setup.cfg`, `setup.py`, `tox.ini` and
+`requirements*.txt` as text, at the checkout root and one level down,
+because a vendored subproject declares the dependencies of the tests it
+ships: `inline-snapshot` is declared in `pydantic-core/pyproject.toml`,
+whose tests pydantic collects. It is a confirmation set, not a resolution --
+the question asked of it is only "does this project name this distribution
+at all".
+
+Measured on pydantic, from a clean checkout:
+
+| | before | after |
+| --- | --- | --- |
+| repairs applied | 3, then escalated | 4 |
+| collection | 7 errors | clean |
+| tests collected | 0 (failed) | 13427 |
+
+And this finally exercises the rebuild path B43 could not. pydantic's
+manifest carries 22 pins -- `inline-snapshot`, `pytest-benchmark`,
+`py-cpuinfo2`, `dirty-equals` among them -- and rebuilding from it in a
+second environment collects 13427 again, with no drift and no pin refused.
