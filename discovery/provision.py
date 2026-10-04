@@ -28,6 +28,13 @@ INSTALL_ARGV = ("uv", "pip", "install", "--quiet", "--python")
 #: Always needed, whatever the project asks for.
 BASE_PACKAGES = ("pytest", "hypothesis")
 
+#: The packages a run is measuring rather than holding still. A pinned
+#: environment must leave these free to resolve, or an upgrade the loop
+#: exists to test cannot be installed.
+TOOLCHAIN = frozenset(
+    {"hypothesis", "pytest", "crosshair-tool", "hypothesis-crosshair"}
+)
+
 #: The plugin installed into each target environment. A released version by
 #: default, so a run measures what users actually get rather than a working
 #: tree; pass a git specifier or a checkout to test an unreleased change.
@@ -85,12 +92,17 @@ def plugin_argv(requirement: str) -> List[str]:
     return ["-e", requirement] if os.path.isdir(requirement) else [requirement]
 
 
+def toolchain_requirements(plugin: str = DEFAULT_PLUGIN) -> List[str]:
+    """Install arguments for the packages under test."""
+    return [*BASE_PACKAGES, *plugin_argv(plugin)]
+
+
 def _collected_count(text: str) -> int:
     found = _COLLECTED_RE.search(text)
     return int(found.group("count")) if found else 0
 
 
-def _install(
+def install(
     sandbox: Sandbox, python: str, targets: Sequence[str], cwd: str, env: Dict[str, str]
 ) -> Tuple[bool, str]:
     done = sandbox.run(
@@ -103,7 +115,7 @@ def _install(
     return done.returncode == 0, (done.stderr or done.stdout)
 
 
-def _collect(
+def collect(
     sandbox: Sandbox,
     python: str,
     project_dir: str,
@@ -149,14 +161,14 @@ def provision(
         result.error = f"could not create a virtual environment: {made.stderr[-300:]}"
         return result
 
-    everything = [*BASE_PACKAGES, *plugin_argv(plugin), *extra_packages]
-    installed, detail = _install(
+    everything = [*toolchain_requirements(plugin), *extra_packages]
+    installed, detail = install(
         sandbox, result.python, ["-e", project_dir, *everything], project_dir, {}
     )
     if not installed:
         # A suite that puts its own package on the path works without being
         # installed, so a failed build is not yet a failed provisioning.
-        without_project, retry_detail = _install(
+        without_project, retry_detail = install(
             sandbox, result.python, everything, project_dir, {}
         )
         if not without_project:
@@ -165,7 +177,7 @@ def provision(
         result.repairs.append(RUN_FROM_CHECKOUT)
 
     while True:
-        ok, text, count = _collect(
+        ok, text, count = collect(
             sandbox, result.python, project_dir, result.pytest_args, result.env
         )
         if ok:
@@ -179,7 +191,7 @@ def provision(
         result.env.update(repair.env)
         result.pytest_args.extend(repair.pytest_args)
         if repair.packages:
-            installed, detail = _install(
+            installed, detail = install(
                 sandbox, result.python, repair.packages, project_dir, {}
             )
             if not installed:

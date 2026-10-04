@@ -13,6 +13,7 @@ from typing import List, Optional
 from .known_repos import candidates as recorded_candidates
 from .probe import probe_all
 from .pypi import facts_from, metadata, shortlist, top_packages
+from .workspace import DATASET_NAME, Workspace
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -34,6 +35,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument("--budget", type=int, default=25, help="checkouts to fetch")
     parser.add_argument("--cache", default="", help="directory for PyPI responses")
+    parser.add_argument(
+        "--workspace",
+        default="",
+        help=(
+            "persistent directory; a recorded index mounted there as "
+            "datasets/" + DATASET_NAME + " is used when --index names none"
+        ),
+    )
     parser.add_argument("--work", required=True, help="directory for checkouts")
     parser.add_argument(
         "--keep", action="store_true", help="leave checkouts in place to provision"
@@ -41,10 +50,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
 
-    if args.index:
-        chosen = recorded_candidates(args.index, args.budget)
+    space = Workspace.from_environment(args.workspace)
+    index = args.index or (space.dataset() if space else None)
+    if index:
+        chosen = recorded_candidates(index, args.budget)
         print(
-            f"{len(chosen)} candidate(s) from the recorded index",
+            f"{len(chosen)} candidate(s) from the recorded index {index}",
             file=sys.stderr,
         )
     else:
