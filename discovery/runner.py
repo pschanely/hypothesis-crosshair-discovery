@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Sequence
 
 from . import telemetry
 from .model import Arm, CaseOutcome, Outcome, RunResult, SearchProgress, Tier
-from .sandbox import Limits, Sandbox
+from .sandbox import Limits, Sandbox, writable_directory
 
 _PLUGIN_SOURCE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "_injected_plugin.py"
@@ -74,11 +74,14 @@ class Runner:
         self.sandbox = sandbox
         self.project_dir = project_dir
         self.run_root = run_root
-        self._plugin_dir = os.path.join(run_root, "_plugin")
-        os.makedirs(self._plugin_dir, exist_ok=True)
+        self._plugin_dir = writable_directory(os.path.join(run_root, "_plugin"))
         shutil.copy(
             _PLUGIN_SOURCE, os.path.join(self._plugin_dir, "_injected_plugin.py")
         )
+
+    def _inside(self, path: str) -> str:
+        """A host path as the sandboxed command will see it."""
+        return self.sandbox.inside(self.project_dir, path)
 
     def _paths(self, spec: RunSpec) -> Dict[str, str]:
         slug = f"{spec.arm.value}-{spec.tier.value}"
@@ -86,8 +89,7 @@ class Runner:
             slug += f"-seed{spec.seed}"
         if spec.collect_only:
             slug += "-collect"
-        base = os.path.join(self.run_root, slug)
-        os.makedirs(base, exist_ok=True)
+        base = writable_directory(os.path.join(self.run_root, slug))
         return {
             "base": base,
             "report": os.path.join(base, "report.json"),
@@ -98,9 +100,9 @@ class Runner:
         env = {
             "PYTHONHASHSEED": "0",
             "PYTHONDONTWRITEBYTECODE": "1",
-            "PYTHONPATH": self._plugin_dir,
-            "HYPOTHESIS_STORAGE_DIRECTORY": paths["storage"],
-            "HCD_REPORT": paths["report"],
+            "PYTHONPATH": self._inside(self._plugin_dir),
+            "HYPOTHESIS_STORAGE_DIRECTORY": self._inside(paths["storage"]),
+            "HCD_REPORT": self._inside(paths["report"]),
             "HCD_MAX_EXAMPLES": str(spec.max_examples),
             "HCD_DEADLINE": "none",
             "HCD_ONLY_HYPOTHESIS": "1",
@@ -108,7 +110,7 @@ class Runner:
         if spec.backend:
             env["HCD_BACKEND"] = spec.backend
         if spec.database_dir:
-            env["HCD_DB_DIR"] = spec.database_dir
+            env["HCD_DB_DIR"] = self._inside(spec.database_dir)
         if spec.tier is Tier.B_TELEMETRY:
             env["HYPOTHESIS_EXPERIMENTAL_OBSERVABILITY"] = "1"
         return env
@@ -120,7 +122,8 @@ class Runner:
         project would otherwise inherit settings and collection hooks from
         whatever happens to sit above it on disk.
         """
-        args = ["--confcutdir", self.project_dir]
+        here = self._inside(self.project_dir)
+        args = ["--confcutdir", here]
         if any(
             os.path.exists(os.path.join(self.project_dir, name))
             for name in _CONFIG_FILES
@@ -130,7 +133,7 @@ class Runner:
         if not os.path.exists(empty):
             with open(empty, "w") as handle:
                 handle.write("[pytest]\n")
-        return args + ["-c", empty, "--rootdir", self.project_dir]
+        return args + ["-c", self._inside(empty), "--rootdir", here]
 
     def build_argv(self, spec: RunSpec) -> List[str]:
         argv = (

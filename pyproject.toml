@@ -33,6 +33,7 @@ lint = [
 
 [project.scripts]
 discovery = "discovery.cli:main"
+discovery-run = "discovery.driver_cli:main"
 discovery-probe = "discovery.probe_cli:main"
 discovery-provision = "discovery.provision_cli:main"
 discovery-candidates = "discovery.candidates_cli:main"

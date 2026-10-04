@@ -20,7 +20,14 @@ from . import triage as triage_mod
 from .model import Classification, RunResult, SearchProgress, Verdict
 from .pipeline import Pipeline, PipelineConfig, PipelineReport, stats_for
 from .runner import CollectionFailed, EnvSpec, Runner
-from .sandbox import DockerSandbox, Limits, LocalSandbox, Sandbox, docker_available
+from .sandbox import (
+    DockerSandbox,
+    Limits,
+    LocalSandbox,
+    Sandbox,
+    docker_available,
+    writable_directory,
+)
 from .store import Store, cache_key, classification_from_payload
 
 _HEADLINE_ORDER = [
@@ -38,14 +45,27 @@ _HEADLINE_ORDER = [
 ]
 
 
-def _build_sandbox(args: argparse.Namespace) -> Sandbox:
+#: Where a run root outside the project is mounted. A run has to write its
+#: reports somewhere, and the container only sees what is mounted into it.
+RUN_MOUNT = "/run"
+
+
+def _build_sandbox(
+    args: argparse.Namespace, run_root: str = "", label: str = ""
+) -> Sandbox:
     if args.sandbox == "docker":
         if not docker_available():
             sys.exit(
                 "docker is not usable here. Use --sandbox local only for code you "
                 "already trust; it provides no isolation."
             )
-        return DockerSandbox(image=args.image)
+        mounts = {}
+        if run_root:
+            project = os.path.abspath(args.project)
+            relative = os.path.relpath(os.path.abspath(run_root), project)
+            if relative == os.pardir or relative.startswith(os.pardir + os.sep):
+                mounts[os.path.abspath(run_root)] = RUN_MOUNT
+        return DockerSandbox(image=args.image, mounts=mounts, label=label)
     return LocalSandbox(i_understand_this_is_unsafe=True)
 
 
@@ -707,7 +727,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     run_root = os.path.abspath(
         args.run_root or os.path.join(project, ".discovery", run_id)
     )
-    os.makedirs(run_root, exist_ok=True)
+    writable_directory(run_root)
 
     crosshair_env = EnvSpec(
         label="crosshair",
@@ -736,7 +756,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     def build(root: str) -> Pipeline:
         return Pipeline(
-            Runner(_build_sandbox(args), project_dir=project, run_root=root),
+            Runner(_build_sandbox(args, run_root), project_dir=project, run_root=root),
             crosshair_env=crosshair_env,
             validation_env=validation_env,
             config=config,

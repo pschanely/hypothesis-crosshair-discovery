@@ -164,6 +164,17 @@ class Workspace:
             )
         return self.ensure_checkout(stored.project, stored.repo_url, stored.commit)
 
+    def existing_checkout(self, project: str) -> Checkout:
+        """A checkout already in the workspace, without fetching anything."""
+        dest = self.checkout_dir(project)
+        if not os.path.isdir(os.path.join(dest, ".git")):
+            return Checkout(
+                project=project,
+                path=dest,
+                error="no checkout here, and no manifest to restore one from",
+            )
+        return Checkout(project=project, path=dest, commit=project_commit(dest))
+
     def ensure_checkout(
         self, project: str, repo_url: str, commit: str = ""
     ) -> Checkout:

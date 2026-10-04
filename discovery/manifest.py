@@ -32,6 +32,7 @@ from .provision import (
     INSTALL_LIMITS,
     RUN_FROM_CHECKOUT,
     TOOLCHAIN,
+    VENV_ARGV,
     Provisioned,
     collect,
     install,
@@ -257,22 +258,38 @@ class Rebuilt:
         return f"{self.manifest.project}: {self.collected} tests collected{suffix}"
 
 
+#: Builds the environment with no plugin in it, which is what validation
+#: replays a reported example in.
+CLEAN_ROOM = ""
+
+
 def rebuild(
     sandbox: Sandbox,
     stored: Manifest,
     project_dir: str,
     venv_dir: str,
-    plugin: str = "",
+    plugin: Optional[str] = None,
 ) -> Rebuilt:
     """Build an environment from a manifest and check it against it.
 
     The pins install in one pass with a freshly resolved toolchain. Pins the
     new toolchain refuses are dropped rather than fought with, because a
     rebuild that stops is worse than one that reports what it had to give up.
+
+    ``plugin`` defaults to the requirement the manifest recorded;
+    ``CLEAN_ROOM`` installs none.
     """
-    result = Rebuilt(manifest=stored, python=venv_python(venv_dir))
+    here = sandbox.inside(project_dir, project_dir)
+    result = Rebuilt(
+        manifest=stored, python=venv_python(sandbox.inside(project_dir, venv_dir))
+    )
     made = sandbox.run(
-        ["uv", "venv", "--quiet", venv_dir, "--python", stored.python_version],
+        list(VENV_ARGV)
+        + [
+            sandbox.inside(project_dir, venv_dir),
+            "--python",
+            stored.python_version,
+        ],
         cwd=project_dir,
         network=True,
         limits=INSTALL_LIMITS,
@@ -281,8 +298,8 @@ def rebuild(
         result.error = f"could not create a virtual environment: {made.stderr[-300:]}"
         return result
 
-    tools = toolchain_requirements(plugin or stored.plugin)
-    project = ["-e", project_dir] if stored.installs_project else []
+    tools = toolchain_requirements(stored.plugin if plugin is None else plugin)
+    project = ["-e", here] if stored.installs_project else []
     installed, detail = install(
         sandbox, result.python, [*project, *tools, *stored.pins], project_dir, {}
     )

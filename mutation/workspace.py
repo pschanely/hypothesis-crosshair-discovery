@@ -84,13 +84,13 @@ SUITE = Suite(
         ),
         Mutation(
             "an existing checkout is cloned over",
-            '        if not os.path.isdir(os.path.join(dest, ".git")):',
-            "        if True:",
+            '        state = Checkout(project=project, path=dest)\n        if not os.path.isdir(os.path.join(dest, ".git")):',
+            "        state = Checkout(project=project, path=dest)\n        if True:",
         ),
         Mutation(
             "a clone is never attempted",
-            '        if not os.path.isdir(os.path.join(dest, ".git")):',
-            "        if False:",
+            '        state = Checkout(project=project, path=dest)\n        if not os.path.isdir(os.path.join(dest, ".git")):',
+            "        state = Checkout(project=project, path=dest)\n        if False:",
         ),
         Mutation(
             "a failed clone reads as a checkout",

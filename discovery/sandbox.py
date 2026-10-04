@@ -40,6 +40,15 @@ class Limits:
 
 
 class Sandbox(ABC):
+    def inside(self, cwd: str, path: str) -> str:
+        """The path as a command run from ``cwd`` will see it.
+
+        A backend that relocates the working directory has to translate the
+        paths it is handed, or a command is told to look somewhere that
+        exists only outside it.
+        """
+        return path
+
     @abstractmethod
     def run(
         self,
@@ -50,6 +59,70 @@ class Sandbox(ABC):
         network: bool = False,
         limits: Optional[Limits] = None,
     ) -> ExecResult: ...
+
+
+#: The user a container runs as when none is named.
+#:
+#: Files a container writes into the mounted workspace are owned by whoever
+#: wrote them, so running as the invoking user keeps the workspace usable
+#: afterwards. Only a root invoker falls back to nobody, which then has to
+#: be able to write the workspace.
+NOBODY = "65534:65534"
+
+
+def default_user() -> str:
+    uid, gid = os.getuid(), os.getgid()
+    return NOBODY if uid == 0 else f"{uid}:{gid}"
+
+
+#: Names the run a container belongs to.
+RUN_LABEL = "discovery-run"
+
+
+def reap_containers(label: str, docker: str = "docker") -> int:
+    """Remove the containers a run left behind, and report how many.
+
+    Killing a container client does not stop its container: the daemon
+    keeps it, so a run the deadline cut off would otherwise leave a solver
+    running on the machine with nothing watching it.
+    """
+    if not label:
+        return 0
+    try:
+        listed = subprocess.run(
+            [docker, "ps", "-q", "--filter", f"label={RUN_LABEL}={label}"],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    ids = [line.strip() for line in listed.stdout.splitlines() if line.strip()]
+    if not ids:
+        return 0
+    try:
+        subprocess.run(
+            [docker, "rm", "--force", *ids],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    return len(ids)
+
+
+def writable_directory(path: str) -> str:
+    """Make a directory the sandboxed user can write into.
+
+    A container running as nobody cannot write a directory root created,
+    and the orchestrator runs as root often enough -- in CI, in a container
+    of its own -- that a run would fail there and nowhere else.
+    """
+    os.makedirs(path, exist_ok=True)
+    if os.getuid() == 0:
+        os.chmod(path, 0o777)
+    return path
 
 
 def _truncate(text: str, limit: int) -> str:
@@ -71,12 +144,36 @@ class DockerSandbox(Sandbox):
         *,
         workdir_mount: str = "/work",
         docker: str = "docker",
+        user: str = "",
+        mounts: Optional[Dict[str, str]] = None,
+        label: str = "",
         extra_args: Sequence[str] = (),
     ) -> None:
         self.image = image
         self.workdir_mount = workdir_mount
         self.docker = docker
+        self.user = user or default_user()
+        #: Host directories mounted into every container besides the working
+        #: directory. A run needs somewhere to write its reports that is not
+        #: the project it is testing.
+        self.mounts = dict(mounts or {})
+        #: Marks every container this sandbox starts as belonging to one
+        #: run, so a run cut off partway can take its containers with it.
+        self.label = label
         self.extra_args = list(extra_args)
+
+    def inside(self, cwd: str, path: str) -> str:
+        """The path as the container sees it, through whichever mount holds it.
+
+        A path under none of them is not visible to the container at all, so
+        naming one is an error here rather than a command that cannot find
+        the file.
+        """
+        for outside, there in [(cwd, self.workdir_mount), *self.mounts.items()]:
+            relative = os.path.relpath(os.path.abspath(path), os.path.abspath(outside))
+            if relative != os.pardir and not relative.startswith(os.pardir + os.sep):
+                return os.path.normpath(os.path.join(there, relative))
+        raise ValueError(f"{path} is not mounted into the sandbox")
 
     def build_argv(
         self,
@@ -103,10 +200,14 @@ class DockerSandbox(Sandbox):
             f"--memory={limits.memory_mb}m",
             f"--memory-swap={limits.memory_mb}m",
             f"--cpus={limits.cpus}",
-            "--user=65534:65534",
+            f"--user={self.user}",
             f"--volume={cwd}:{self.workdir_mount}:rw",
             f"--workdir={self.workdir_mount}",
         ]
+        for outside, there in sorted(self.mounts.items()):
+            cmd.append(f"--volume={outside}:{there}:rw")
+        if self.label:
+            cmd.append(f"--label={RUN_LABEL}={self.label}")
         for key, value in sorted((env or {}).items()):
             cmd.append(f"--env={key}={value}")
         cmd.extend(self.extra_args)

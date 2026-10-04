@@ -71,6 +71,34 @@ toolchain refuses are dropped and reported as **resolved afresh**.
 A manifest records the repository and commit as well, so a container that
 lost its checkout restores it from the manifest alone.
 
+### Running a window
+
+A run is bounded by time, not by its list of projects: the machine is
+reclaimed on someone else's schedule, so the question is which projects fit.
+
+```
+docker build -t discovery-target:3.12 .
+discovery-run --workspace /work --minutes 60 --clean-room
+```
+
+Each project is restored, built, and tested in turn, and one that the
+deadline arrives before is reported as **not reached** rather than as having
+found nothing. A project the deadline cuts off mid-test keeps the verdicts
+it reached: each project runs under a run id derived from its name and
+commit, so the next window continues that run instead of repeating it.
+
+`--test-timeout` bounds what a single test may spend in the solver, which
+the pipeline's own default does not: one test can otherwise take a quarter
+of an hour of a window holding several projects.
+
+`--clean-room` builds a second environment from the same manifest with no
+plugin in it, and hands it to the pipeline as `--validation-python`. Without
+one, findings stay `pending_validation` rather than being claimed.
+
+The image is the one in `Dockerfile`: an interpreter and uv, and nothing of
+this project, because the orchestrator stays on the host and only ever runs
+commands inside. Behind a TLS-inspecting proxy, add your CA to it.
+
 A recorded index mounted at `datasets/hypothesis_nodes.json` is picked up by
 `discovery-probe --workspace /work` when `--index` names none. It is not
 vendored: it is a snapshot that goes stale, and refreshing it should not need
@@ -273,6 +301,7 @@ defect.
 
 | Module | Role |
 | --- | --- |
+| `driver.py` | One run: each project through its phases, bounded by a deadline |
 | `provision.py` | Builds an environment per project, repairing the harness as needed |
 | `manifest.py` | Records what an environment took, and rebuilds it in a later container |
 | `workspace.py` | The persistent directory: checkouts, manifests, datasets, the store |
