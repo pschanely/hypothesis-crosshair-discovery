@@ -16,13 +16,22 @@ caller, which is the behaviour to keep: guessing at an unseen failure is how
 a harness ends up quietly running something other than the suite.
 """
 
+import dataclasses
+import glob
+import os
 import re
 import shlex
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence
+from typing import Dict, Iterable, List, Optional, Sequence, Set
+
+from .pypi import requirement_name
 
 #: Repairs attempted for one project before it is escalated instead.
-MAX_REPAIRS = 3
+#:
+#: A guess, bounded by what has been observed: pydantic needs four -- its
+#: configured plugins, a marker plugin, and two rounds of missing imports,
+#: because an import error hides every later import in the same module.
+MAX_REPAIRS = 6
 
 #: Command-line flags a project's own pytest configuration may carry, mapped
 #: to the distribution that supplies them. A suite whose ``addopts`` names a
@@ -87,6 +96,33 @@ MODULE_DISTRIBUTIONS = {
 }
 
 
+#: Files a project names its dependencies in. Read as text, never executed,
+#: and never for what to install -- only to confirm a name the suite already
+#: asked for by importing it.
+REQUIREMENT_FILES = (
+    "pyproject.toml",
+    "setup.cfg",
+    "setup.py",
+    "tox.ini",
+    "requirements*.txt",
+    os.path.join("requirements", "*.txt"),
+)
+
+#: Bytes read from any one of them. A generated lockfile can be enormous and
+#: adds nothing a project's own declaration does not.
+MAX_REQUIREMENT_BYTES = 500_000
+
+#: Directory names that hold another project's dependencies, not this one's.
+SKIPPED_DIRECTORIES = frozenset(
+    {"node_modules", "site-packages", "venv", "env", "build", "dist"}
+)
+
+#: Entries of the checkout root considered before looking for configuration.
+MAX_SUBDIRECTORIES = 200
+
+_DISTRIBUTION_NAME_RE = re.compile(r"[a-z][a-z0-9._-]{1,60}")
+
+
 @dataclass
 class Repair:
     """A change to the environment a suite runs in, and nothing more."""
@@ -116,6 +152,84 @@ def _distribution_for_flag(flag: str) -> Optional[str]:
     return None
 
 
+def _missing_modules(text: str) -> List[str]:
+    """Every module an import failed on, in the order the failures appear."""
+    found: List[str] = []
+    for match in _MISSING_MODULE_RE.finditer(text):
+        head = match.group("module").split(".")[0]
+        if head not in found:
+            found.append(head)
+    return found
+
+
+def declared_names(text: str) -> Set[str]:
+    """Distribution names a configuration file mentions.
+
+    A broad read of one file's tokens, not a parse of its dependency tables:
+    it answers "does this project name this distribution at all", which is
+    all that is asked of it.
+    """
+    found = set()
+    for raw in re.split(r"[\"'\n,=\[\]]", text):
+        token = raw.strip()
+        if not token:
+            continue
+        name = requirement_name(token)
+        if name and _DISTRIBUTION_NAME_RE.fullmatch(name):
+            found.add(name)
+    return found
+
+
+def _declaring_directories(project_dir: str) -> List[str]:
+    """The checkout root and its immediate subdirectories.
+
+    A vendored subproject declares its own test dependencies, and its tests
+    are collected along with everything else, so one level down is part of
+    the project. Deeper is a different project's business.
+    """
+    found = [project_dir]
+    try:
+        entries = sorted(os.listdir(project_dir))
+    except OSError:
+        return found
+    for name in entries[:MAX_SUBDIRECTORIES]:
+        if name.startswith(".") or name in SKIPPED_DIRECTORIES:
+            continue
+        path = os.path.join(project_dir, name)
+        if os.path.isdir(path):
+            found.append(path)
+    return found
+
+
+def declared_requirements(project_dir: str) -> Set[str]:
+    """Distribution names the checkout's own configuration mentions."""
+    found: Set[str] = set()
+    for directory in _declaring_directories(project_dir):
+        for pattern in REQUIREMENT_FILES:
+            for path in sorted(glob.glob(os.path.join(directory, pattern))):
+                try:
+                    with open(path, errors="replace") as handle:
+                        found |= declared_names(handle.read(MAX_REQUIREMENT_BYTES))
+                except OSError:
+                    continue
+    return found
+
+
+def _distribution_for_module(module: str, declared: Iterable[str]) -> Optional[str]:
+    """The distribution supplying a module, if that is known rather than guessed.
+
+    A module name is not a distribution name, and resolving one to the other
+    by spelling installs whatever happens to hold that name on PyPI. Either
+    the mapping is recorded here, or the project itself names the
+    distribution, or the failure escalates.
+    """
+    known = MODULE_DISTRIBUTIONS.get(module)
+    if known:
+        return known
+    spelled = module.replace("_", "-").lower()
+    return spelled if spelled in set(declared) else None
+
+
 def _unrecognized_flags(text: str) -> List[str]:
     found: List[str] = []
     for match in _UNRECOGNIZED_RE.finditer(text):
@@ -125,8 +239,13 @@ def _unrecognized_flags(text: str) -> List[str]:
     return found
 
 
-def diagnose(text: str) -> Optional[Repair]:
-    """Name a repair for a failure, or nothing if the failure is unfamiliar."""
+def diagnose(text: str, declared: Iterable[str] = ()) -> Optional[Repair]:
+    """Name a repair for a failure, or nothing if the failure is unfamiliar.
+
+    ``declared`` holds distribution names the project's own configuration
+    mentions, which turns a missing import into a confirmation rather than a
+    guess at which project on PyPI supplies that module.
+    """
     flags = _unrecognized_flags(text)
     distributions: List[str] = []
     for flag in flags:
@@ -148,16 +267,21 @@ def diagnose(text: str) -> Optional[Repair]:
             pytest_args=neutralize,
         )
 
-    missing = _MISSING_MODULE_RE.search(text)
-    if missing:
-        module = missing.group("module")
-        dist = MODULE_DISTRIBUTIONS.get(module.split(".")[0])
-        if dist:
-            return Repair(
-                name="install-missing-import",
-                rationale=f"a test module imports {module}, supplied by {dist}",
-                packages=[dist],
-            )
+    modules = _missing_modules(text)
+    supplying: List[str] = []
+    for module in modules:
+        dist = _distribution_for_module(module, declared)
+        if dist and dist not in supplying:
+            supplying.append(dist)
+    if supplying:
+        return Repair(
+            name="install-missing-imports",
+            rationale=(
+                f"test modules import {', '.join(modules)}, supplied by "
+                f"{', '.join(supplying)}"
+            ),
+            packages=supplying,
+        )
 
     marker = _MISSING_MARKER_RE.search(text)
     if marker and marker.group("marker") in MARKER_DISTRIBUTIONS:
@@ -203,15 +327,28 @@ def _mentions_crosshair(text: str) -> bool:
     return "crosshair" in lowered or "hypothesis_crosshair" in lowered
 
 
-def plan(text: str, applied: Sequence[str] = ()) -> Optional[Repair]:
-    """The next repair to try, given the ones already tried for this project.
+def plan(
+    text: str,
+    applied: Sequence[str] = (),
+    declared: Iterable[str] = (),
+    installed: Iterable[str] = (),
+) -> Optional[Repair]:
+    """The next repair to try, given what has already been tried here.
 
-    A repair already attempted is not offered again, so a failure the repair
-    did not actually fix escalates instead of looping.
+    A repair is offered again only when it would install something not
+    installed yet, which a suite needs: an import error hides every later
+    import in the same module, so the modules missing from a collection are
+    discovered in waves. Anything else already attempted escalates instead
+    of looping, and the budget bounds the rounds either way.
     """
     if len(applied) >= MAX_REPAIRS:
         return None
-    found = diagnose(text)
-    if found is None or found.name in applied:
+    found = diagnose(text, declared)
+    if found is None:
         return None
-    return found
+    if not found.packages:
+        return None if found.name in applied else found
+    fresh = [name for name in found.packages if name not in set(installed)]
+    if not fresh:
+        return None
+    return dataclasses.replace(found, packages=fresh)

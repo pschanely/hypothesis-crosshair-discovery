@@ -63,6 +63,8 @@ class Provisioned:
     pytest_args: List[str] = field(default_factory=list)
     env: Dict[str, str] = field(default_factory=dict)
     repairs: List[str] = field(default_factory=list)
+    #: Packages the repairs installed, so a repeated repair adds to them.
+    repair_packages: List[str] = field(default_factory=list)
     collected: int = 0
     error: str = ""
 
@@ -148,6 +150,7 @@ def provision(
     produced no result rather than saying the harness is broken.
     """
     result = Provisioned(project=project_dir)
+    declared = harness.declared_requirements(project_dir)
     venv_dir = venv_dir or os.path.join(project_dir, ".venv-ch")
     result.python = venv_python(venv_dir)
 
@@ -183,7 +186,7 @@ def provision(
         if ok:
             result.collected = count
             return result
-        repair = harness.plan(text, result.repairs)
+        repair = harness.plan(text, result.repairs, declared, result.repair_packages)
         if repair is None:
             result.error = f"collection failed: {text.strip()[-300:]}"
             return result
@@ -191,6 +194,7 @@ def provision(
         result.env.update(repair.env)
         result.pytest_args.extend(repair.pytest_args)
         if repair.packages:
+            result.repair_packages.extend(repair.packages)
             installed, detail = install(
                 sandbox, result.python, repair.packages, project_dir, {}
             )

@@ -23,11 +23,6 @@ SUITE = Suite(
             '    return Repair(name="guess", rationale="?", packages=["pytest"])\n\n\ndef _mentions_crosshair(',
         ),
         Mutation(
-            "an unmapped import is guessed from its module name",
-            '        dist = MODULE_DISTRIBUTIONS.get(module.split(".")[0])',
-            '        dist = MODULE_DISTRIBUTIONS.get(module.split(".")[0], module)',
-        ),
-        Mutation(
             "only the first unrecognized flag is handled",
             "    for flag in flags:\n        dist = _distribution_for_flag(flag)",
             "    for flag in flags[:1]:\n        dist = _distribution_for_flag(flag)",
@@ -38,14 +33,69 @@ SUITE = Suite(
             "        if bare == prefix:",
         ),
         Mutation(
-            "a repair repeats forever",
-            "    if found is None or found.name in applied:",
-            "    if found is None:",
-        ),
-        Mutation(
             "the repair budget is ignored",
             "    if len(applied) >= MAX_REPAIRS:\n        return None",
             "    if False:\n        return None",
+        ),
+        Mutation(
+            "every missing import but the first is ignored",
+            "        if head not in found:\n            found.append(head)",
+            "        if head not in found and not found:\n            found.append(head)",
+        ),
+        Mutation(
+            "a module name is turned into a distribution without confirmation",
+            "    return spelled if spelled in set(declared) else None",
+            "    return spelled",
+        ),
+        Mutation(
+            "a declaration overrides the recorded mapping",
+            "    known = MODULE_DISTRIBUTIONS.get(module)",
+            "    known = None",
+        ),
+        Mutation(
+            "a module name is matched to a declaration without respelling it",
+            '    spelled = module.replace("_", "-").lower()',
+            "    spelled = module",
+        ),
+        Mutation(
+            "a vendored subproject's declarations are not read",
+            "    for directory in _declaring_directories(project_dir):",
+            "    for directory in [project_dir]:",
+        ),
+        Mutation(
+            "every directory in the checkout is read, however deep",
+            "        if os.path.isdir(path):\n            found.append(path)",
+            "        if os.path.isdir(path):\n            found.extend(r for r, _, _ in os.walk(path))",
+        ),
+        Mutation(
+            "a configuration file that cannot be read fails the scan",
+            "                except OSError:\n                    continue",
+            "                except KeyboardInterrupt:\n                    continue",
+        ),
+        Mutation(
+            "a requirement keeps its version specifier",
+            "        name = requirement_name(token)",
+            "        name = token.lower()",
+        ),
+        Mutation(
+            "a repeated repair reinstalls what is already there",
+            "    fresh = [name for name in found.packages if name not in set(installed)]",
+            "    fresh = list(found.packages)",
+        ),
+        Mutation(
+            "a name of any length may be a distribution",
+            'r"[a-z][a-z0-9._-]{1,60}"',
+            'r"[a-z][a-z0-9._-]{1,600}"',
+        ),
+        Mutation(
+            "a repair with nothing new to install is offered anyway",
+            "    if not fresh:\n        return None",
+            "    if False:\n        return None",
+        ),
+        Mutation(
+            "a repair that installs nothing may repeat forever",
+            "    if not found.packages:\n        return None if found.name in applied else found",
+            "    if not found.packages:\n        return found",
         ),
         Mutation(
             "a repair gains the power to edit a file",
@@ -105,8 +155,8 @@ SUITE = Suite(
         ),
         Mutation(
             "a known test dependency is skipped instead of installed",
-            '        dist = MODULE_DISTRIBUTIONS.get(module.split(".")[0])\n        if dist:',
-            "        dist = None\n        if dist:",
+            "        dist = _distribution_for_module(module, declared)",
+            "        dist = None",
         ),
     ],
 )

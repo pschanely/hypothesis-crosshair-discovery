@@ -257,6 +257,13 @@ rather than merely discouraged. Diagnosis happens in the pipeline; applying a
 repair needs the network and so belongs to the install phase outside it. An
 unrecognized failure yields no repair and exits 2.
 
+A missing test dependency is installed only when the mapping from module to
+distribution is recorded, or the project's own configuration names that
+distribution. Resolving one to the other by spelling alone would install
+whatever happens to hold the name on PyPI. The repair may run again for
+packages it has not installed yet, because an import error hides every later
+import in the same module, so what a suite is missing emerges in waves.
+
 **Nondeterminism means skip, not bug.** CrossHair's determinism check is deep:
 an internal memoization cache that never changes observable behavior is enough
 to trip it. A high rate quarantines the test; it is not counted as a CrossHair
