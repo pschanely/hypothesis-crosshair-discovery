@@ -9,7 +9,7 @@ from typing import List, Optional
 from .driver import drive, write_report
 from .provision import DEFAULT_PLUGIN
 from .sandbox import DockerSandbox, LocalSandbox, Sandbox
-from .workspace import Workspace
+from .workspace import CHECKOUTS, Workspace
 
 #: Default length of a run, in minutes. A run is cut off, not hurried.
 DEFAULT_WINDOW = 60
@@ -88,11 +88,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 2
     space.prepare()
 
-    projects = args.projects or [stored.project for stored in space.manifests()]
+    projects = args.projects or space.projects()
     if not projects:
         print(
-            f"nothing to run: no project named, and no manifests in "
-            f"{space.path('manifests')}",
+            f"nothing to run: no project named, and no checkouts in "
+            f"{space.path(CHECKOUTS)}",
             file=sys.stderr,
         )
         return 2

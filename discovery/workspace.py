@@ -184,6 +184,19 @@ class Workspace:
             )
         return Checkout(project=project, path=dest, commit=project_commit(dest))
 
+    def projects(self) -> List[str]:
+        """Every project the workspace holds, by name.
+
+        A checkout counts even with no manifest: the first run of a project
+        is the one that writes its manifest, so requiring one would mean a
+        fresh workspace had nothing to do.
+        """
+        found = {stored.project for stored in self.manifests()}
+        for name in sorted(os.listdir(self.path(CHECKOUTS))):
+            if os.path.isdir(os.path.join(self.path(CHECKOUTS), name, ".git")):
+                found.add(name)
+        return sorted(found)
+
     def ensure_checkout(
         self, project: str, repo_url: str, commit: str = ""
     ) -> Checkout:

@@ -7,7 +7,9 @@ interpreter that will run the solver arm.
 
 import json
 import subprocess
-from typing import Dict, List
+from typing import Dict, List, Optional
+
+from .sandbox import Limits, Sandbox
 
 #: Reported when a value cannot be read.
 #:
@@ -56,16 +58,28 @@ def remote_url(project_dir: str) -> str:
     return done.stdout.strip() if done.returncode == 0 else UNKNOWN
 
 
-def environment_versions(python_argv: List[str]) -> Dict[str, str]:
-    """CrossHair, plugin and Python versions in the solver arm's interpreter."""
+def environment_versions(
+    python_argv: List[str],
+    sandbox: Optional[Sandbox] = None,
+    cwd: str = "",
+) -> Dict[str, str]:
+    """CrossHair, plugin and Python versions in the solver arm's interpreter.
+
+    Asked of the interpreter where it exists. Under a sandbox that relocates
+    the working directory the solver's interpreter is a path inside the
+    container, so running the probe on the host finds nothing and every
+    version reads as unknown -- which a cached verdict would then be keyed
+    by, leaving an upgrade unable to invalidate anything.
+    """
     blank = {"python": UNKNOWN, "crosshair": UNKNOWN, "plugin": UNKNOWN}
+    argv = list(python_argv) + ["-c", _VERSION_PROBE]
     try:
-        done = subprocess.run(
-            list(python_argv) + ["-c", _VERSION_PROBE],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
+        if sandbox is not None:
+            done = sandbox.run(
+                argv, cwd=cwd, network=False, limits=Limits(wall_seconds=120)
+            )
+        else:
+            done = subprocess.run(argv, capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.SubprocessError):
         return blank
     if done.returncode != 0:

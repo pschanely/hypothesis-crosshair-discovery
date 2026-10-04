@@ -22,6 +22,7 @@ from discovery.defects import (
     update,
 )
 from discovery.model import Verdict
+from discovery.store import Store
 
 VERSION = "0.0.111"
 NEXT_VERSION = "0.0.112"
@@ -40,18 +41,15 @@ def seen(signature="abc123", project="alpha", frame="crosshair/core.py:12"):
     )
 
 
-def report(verdict="crosshair_false_positive", nodeid="t::one", frame="f.py:1"):
+def row(verdict="crosshair_false_positive", nodeid="t::one", frame="f.py:1"):
+    """One row as the store hands it back."""
     return {
-        "classifications": [{"nodeid": nodeid, "verdict": verdict}],
-        "clusters": [
-            {
-                "exception_type": "ValueError",
-                "frame": frame,
-                "message": "boom",
-                "nodeids": [nodeid],
-                "sample": "trace",
-            }
-        ],
+        "nodeid": nodeid,
+        "verdict": verdict,
+        "exception": "ValueError",
+        "frame": frame,
+        "message": "boom",
+        "sample": "trace",
     }
 
 
@@ -201,43 +199,41 @@ def test_an_entry_with_no_signature_is_not_a_defect(tmp_path):
 
 
 def test_a_false_positive_is_crosshairs_without_anyone_triaging_it():
-    found = sightings_from(report("crosshair_false_positive"), "alpha")
+    found = sightings_from([row("crosshair_false_positive")], "alpha")
     assert len(found) == 1 and found[0].project == "alpha"
 
 
 def test_a_crash_is_crosshairs_too():
-    assert len(sightings_from(report("crosshair_crash"), "alpha")) == 1
+    assert len(sightings_from([row("crosshair_crash")], "alpha")) == 1
 
 
 def test_a_trophy_is_not_crosshairs():
-    assert sightings_from(report("trophy_candidate"), "alpha") == []
+    assert sightings_from([row("trophy_candidate")], "alpha") == []
 
 
 def test_a_timeout_is_a_hard_search_not_a_defect():
-    assert sightings_from(report("crosshair_timeout"), "alpha") == []
+    assert sightings_from([row("crosshair_timeout")], "alpha") == []
     assert "crosshair_timeout" not in ATTRIBUTABLE
 
 
-def test_a_cluster_no_verdict_attributes_is_left_alone():
-    payload = report("crosshair_crash", nodeid="t::one")
-    payload["clusters"][0]["nodeids"] = ["t::other"]
-    assert sightings_from(payload, "alpha") == []
+def test_a_failure_no_verdict_attributes_is_left_alone():
+    assert sightings_from([row("pre_existing_failure")], "alpha") == []
 
 
 def test_two_projects_failing_the_same_way_share_a_signature():
-    one = sightings_from(report("crosshair_crash"), "alpha")[0]
-    two = sightings_from(report("crosshair_crash"), "beta")[0]
+    one = sightings_from([row("crosshair_crash")], "alpha")[0]
+    two = sightings_from([row("crosshair_crash")], "beta")[0]
     assert one.signature == two.signature
 
 
 def test_failing_differently_does_not_share_a_signature():
-    one = sightings_from(report("crosshair_crash", frame="a.py:1"), "alpha")[0]
-    two = sightings_from(report("crosshair_crash", frame="b.py:2"), "alpha")[0]
+    one = sightings_from([row("crosshair_crash", frame="a.py:1")], "alpha")[0]
+    two = sightings_from([row("crosshair_crash", frame="b.py:2")], "alpha")[0]
     assert one.signature != two.signature
 
 
-def test_a_report_with_nothing_in_it_sights_nothing():
-    assert sightings_from({}, "alpha") == []
+def test_a_run_that_recorded_nothing_sights_nothing():
+    assert sightings_from([], "alpha") == []
 
 
 def test_a_gone_defect_sorts_after_a_present_one(tmp_path):
@@ -258,11 +254,12 @@ def test_boom(n):
 """
 
 
-def test_the_reader_matches_what_the_pipeline_actually_writes(tmp_path, capsys):
-    """Pins this against the real producer, not against a payload written here.
+def test_the_reader_matches_what_the_pipeline_actually_records(tmp_path, capsys):
+    """Pins this against the real producer, not against rows written here.
 
-    Every key read below is one the pipeline chose; a rename there would
-    otherwise leave the registry silently finding nothing for good.
+    The pipeline records a failure as each test retires; a change to what it
+    writes would otherwise leave the registry silently finding nothing for
+    good.
     """
     (tmp_path / "test_boom.py").write_text(ALWAYS_FAILS)
     assert (
@@ -285,16 +282,21 @@ def test_the_reader_matches_what_the_pipeline_actually_writes(tmp_path, capsys):
                 "1",
                 "--crosshair-timeout",
                 "30",
+                "--store",
+                str(tmp_path / "store.db"),
+                "--per-test",
                 "--json",
             ]
         )
         == 0
     )
-    payload = json.loads(capsys.readouterr().out)
-    assert payload["clusters"], "a failing property should cluster"
-    for entry in payload["classifications"]:
-        entry["verdict"] = "crosshair_crash"
-    found = sightings_from(payload, "alpha")
+    run_id = json.loads(capsys.readouterr().out)["run_id"]
+    with Store(str(tmp_path / "store.db")) as store:
+        rows = store.failures(run_id)
+    assert rows, "a failing property should record a failure"
+    for row_ in rows:
+        row_["verdict"] = "crosshair_crash"
+    found = sightings_from(rows, "alpha")
     assert len(found) == 1
     assert found[0].exception_type == "AssertionError"
     assert found[0].frame and found[0].signature and found[0].sample

@@ -189,3 +189,30 @@ def test_a_manifest_whose_repository_could_not_be_read_cannot_restore_one(space)
 
     found = space.restore(Manifest(project="proj", repo_url=UNKNOWN))
     assert not found.ready and "no repository" in found.error
+
+
+def test_a_fresh_workspace_offers_the_checkouts_it_holds(space, origin):
+    url, _ = origin
+    space.ensure_checkout("alpha", url)
+    assert space.projects() == ["alpha"], "no manifest yet: the first run writes it"
+
+
+def test_a_manifest_with_no_checkout_is_still_a_project(space):
+    space.write_manifest(Manifest(project="restored-later"))
+    assert space.projects() == ["restored-later"]
+
+
+def test_a_project_with_both_is_offered_once(space, origin):
+    url, _ = origin
+    space.ensure_checkout("alpha", url)
+    space.write_manifest(Manifest(project="alpha"))
+    assert space.projects() == ["alpha"]
+
+
+def test_a_directory_that_is_not_a_checkout_is_not_a_project(space):
+    os.makedirs(space.path(CHECKOUTS, "leftovers"))
+    assert space.projects() == []
+
+
+def test_an_empty_workspace_offers_nothing(space):
+    assert space.projects() == []

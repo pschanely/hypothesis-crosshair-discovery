@@ -15,7 +15,74 @@ design and [`docs/backlog.md`](docs/backlog.md) for what has been measured.
 
 Deterministic end to end. No model is involved in any decision this code makes.
 
+## Running it
+
+You need docker and [uv](https://docs.astral.sh/uv/). Do not run as root:
+containers then run as your own user, which is both what you want and what
+keeps the files they write in the workspace yours. (Root falls back to
+running them as nobody, which cannot write a directory root created, so the
+workspace has to be made writable by hand.)
+
+The orchestrator itself is standard library only, so `uv` is a convenience
+rather than a requirement -- `PYTHONPATH=. python3 -m discovery.driver_cli`
+works from a checkout with nothing installed. Everything a project needs is
+installed inside its container, never here.
+
+```
+git clone https://github.com/pschanely/hypothesis-crosshair-discovery
+cd hypothesis-crosshair-discovery
+uv sync
+
+docker build -t discovery-target:3.12 .      # an interpreter and uv
+mkdir -p ~/discovery/datasets                # the workspace, which you keep
+```
+
+Pick something to look at. Either name repositories yourself:
+
+```
+uv run python -c "
+from discovery.workspace import Workspace
+space = Workspace('$HOME/discovery').prepare()
+for repo in ['python-attrs/attrs', 'jmespath/jmespath.py']:
+    print(space.ensure_checkout(repo.split('/')[1], f'https://github.com/{repo}').describe())
+"
+```
+
+or let the candidate route find them, which clones and surveys before it
+commits to anything:
+
+```
+uv run discovery-probe --workspace ~/discovery \
+    --work ~/discovery/checkouts --keep --budget 10
+```
+
+With a recorded index at `~/discovery/datasets/hypothesis_nodes.json` that
+route uses it; without one it ranks PyPI by downloads instead.
+
+Then run a window:
+
+```
+uv run discovery-run --workspace ~/discovery --minutes 60 --clean-room
+```
+
+That takes every project in the workspace, as far as an hour allows:
+restores its checkout, builds its environment (recording a manifest the
+first time and rebuilding from it afterwards), runs its tests, and writes a
+report. Run it again tomorrow and it picks up where it stopped.
+
+What to read afterwards:
+
+| | |
+| --- | --- |
+| `~/discovery/reports/*.json` | what each window did |
+| `~/discovery/crosshair-defects.json` | known CrossHair defects, and whether they still reproduce |
+| `~/discovery/store.db` | every verdict, keyed by commit and versions |
+
+Nothing is ever posted anywhere. A finding is a draft for you to read.
+
 ## Usage
+
+Running one project by hand, without a workspace:
 
 ```
 python -m discovery.cli \

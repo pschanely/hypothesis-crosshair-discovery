@@ -61,3 +61,40 @@ def test_a_version_bump_invalidates_every_cached_verdict():
     assert cache_key(crosshair_version="0.0.106", **base) != cache_key(
         crosshair_version="0.0.107", **base
     )
+
+
+def failure(store, run_id="r1", nodeid="t.py::test_x", version="0.0.111"):
+    store.record_failure(
+        run_id,
+        nodeid,
+        version,
+        "crosshair_crash",
+        "CrossHairInternal",
+        "core.py:8",
+        "symbolic while not tracing",
+        "trace",
+    )
+
+
+def test_a_failure_is_kept_for_each_version_it_was_seen_on(tmp_path):
+    """An upgrade is a new observation, not an overwrite of the old one."""
+    with Store(str(tmp_path / "s.db")) as store:
+        failure(store, version="0.0.111")
+        failure(store, version="0.0.112")
+        assert len(store.failures("r1")) == 2
+        assert len(store.failures("r1", "0.0.112")) == 1
+        assert store.failures("r1", "0.0.112")[0]["version"] == "0.0.112"
+
+
+def test_the_same_failure_seen_twice_on_one_version_is_one_row(tmp_path):
+    with Store(str(tmp_path / "s.db")) as store:
+        failure(store)
+        failure(store)
+        assert len(store.failures("r1")) == 1
+
+
+def test_failures_belong_to_their_own_run(tmp_path):
+    with Store(str(tmp_path / "s.db")) as store:
+        failure(store, run_id="r1")
+        failure(store, run_id="r2")
+        assert len(store.failures("r1")) == 1

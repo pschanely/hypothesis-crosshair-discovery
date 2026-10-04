@@ -8,7 +8,7 @@ import sys
 import time
 import uuid
 from dataclasses import asdict, replace
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from . import cluster as cluster_mod
 from . import harness
@@ -315,7 +315,7 @@ class _Selection:
     def reuse(self, nodeid: str) -> Optional[Classification]:
         return None
 
-    def record(self, nodeid: str, items: List[Classification]) -> None:
+    def record(self, nodeid: str, items: List[Classification], failures=()) -> None:
         pass
 
 
@@ -385,7 +385,27 @@ class _Journal:
         self.store.complete(self.key(nodeid), self.run_id, found)
         return found
 
-    def record(self, nodeid: str, items: List[Classification]) -> None:
+    def record(
+        self,
+        nodeid: str,
+        items: List[Classification],
+        failures: Sequence[cluster_mod.Cluster] = (),
+    ) -> None:
+        for group in failures:
+            for failed in group.nodeids:
+                verdict = next(
+                    (c.verdict.value for c in items if c.nodeid == failed), ""
+                )
+                self.store.record_failure(
+                    self.run_id,
+                    failed,
+                    self.versions.get("crosshair", provenance.UNKNOWN),
+                    verdict,
+                    group.signature.exception_type,
+                    group.signature.frame,
+                    group.signature.message,
+                    group.sample,
+                )
         for item in items:
             if item.nodeid == nodeid:
                 self.store.complete(self.key(nodeid), self.run_id, item)
@@ -451,7 +471,7 @@ def _run_per_test(
         merged.duration += one.duration
         merged.crosshair_run = _merge_run(merged.crosshair_run, one.crosshair_run)
         merged.telemetry_run = _merge_run(merged.telemetry_run, one.telemetry_run)
-        journal.record(nodeid, one.classifications)
+        journal.record(nodeid, one.classifications, _clusters_of(one))
         print(
             f"  [{index}/{journal.total}] {nodeid} -> "
             + ", ".join(sorted({c.verdict.value for c in one.classifications})),
@@ -764,7 +784,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     store = Store(args.store) if args.store else None
     commit = provenance.project_commit(project)
-    versions = provenance.environment_versions(crosshair_env.python_argv)
+    versions = provenance.environment_versions(
+        crosshair_env.python_argv, _build_sandbox(args, run_root, run_id), project
+    )
     if store is not None:
         store.record_run(
             run_id, project, commit, time.time(), {**versions, "run_root": run_root}

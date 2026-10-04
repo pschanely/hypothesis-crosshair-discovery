@@ -147,8 +147,6 @@ class PipelineResult:
     verdicts: Dict[str, int] = field(default_factory=dict)
     collected: int = 0
     error: str = ""
-    #: CrossHair's own failures, for the registry of known defects.
-    sightings: List[defects_mod.Sighting] = field(default_factory=list)
 
 
 def project_run_id(project: str, commit: str) -> str:
@@ -228,9 +226,7 @@ def _collected(payload: dict) -> int:
         return 0
 
 
-def run_pipeline(
-    argv: Sequence[str], budget: float, project: str = ""
-) -> PipelineResult:
+def run_pipeline(argv: Sequence[str], budget: float) -> PipelineResult:
     """Run one project's pipeline, reading the verdicts it reports.
 
     It runs as its own process group so that a pipeline which dies takes
@@ -264,11 +260,7 @@ def run_pipeline(
     for entry in payload.get("classifications") or []:
         name = str(entry.get("verdict"))
         counted[name] = counted.get(name, 0) + 1
-    return PipelineResult(
-        verdicts=counted,
-        collected=_collected(payload),
-        sightings=defects_mod.sightings_from(payload, project),
-    )
+    return PipelineResult(verdicts=counted, collected=_collected(payload))
 
 
 def verdicts_recorded(store_path: str, run_id: str) -> Dict[str, int]:
@@ -281,6 +273,16 @@ def verdicts_recorded(store_path: str, run_id: str) -> Dict[str, int]:
             name = str(payload.get("verdict"))
             counted[name] = counted.get(name, 0) + 1
     return counted
+
+
+def defects_recorded(
+    store_path: str, run_id: str, project: str, version: str
+) -> List[defects_mod.Sighting]:
+    """CrossHair's own failures in a run, on the version being measured."""
+    if not os.path.exists(store_path):
+        return []
+    with Store(store_path) as store:
+        return defects_mod.sightings_from(store.failures(run_id, version), project)
 
 
 def _build(
@@ -427,7 +429,6 @@ def drive(
                 extra=pipeline_args,
             ),
             deadline - now(),
-            name,
         )
         # A run the deadline cut off still recorded what it reached, and the
         # store is where that is, so the report counts from there either way.
@@ -438,7 +439,7 @@ def drive(
         )
         attempt.error = tested.error
         attempt.seconds = now() - started
-        seen.extend(tested.sightings)
+        seen.extend(defects_recorded(space.store_path, run_id, name, crosshair_version))
 
     report.defects = _record_defects(space, report, seen, crosshair_version)
     report.seconds = now() - report.started_at
