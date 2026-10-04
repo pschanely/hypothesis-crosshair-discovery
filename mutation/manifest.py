@@ -59,8 +59,8 @@ SUITE = Suite(
         ),
         Mutation(
             "the resolved toolchain versions are never recorded",
-            '                versions[name] = line.split("==", 1)[1]',
-            "                pass",
+            '            found[name] = line.split("==", 1)[1]',
+            "            pass",
         ),
         Mutation(
             "the collected count is not carried, so nothing can detect drift",

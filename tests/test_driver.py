@@ -14,6 +14,8 @@ from typing import Dict, List, Optional, Sequence
 import pytest
 
 from discovery import driver
+from discovery.defects import Sighting
+from discovery.defects import load as load_defects
 from discovery.driver import (
     BUILD,
     CLEAN_ROOM_BUILD,
@@ -97,11 +99,14 @@ def quiet_build(monkeypatch, space):
     return fake
 
 
-def ran(verdicts=None, collected=10, error=""):
-    def fake(argv, budget):
-        fake.calls.append({"argv": list(argv), "budget": budget})
+def ran(verdicts=None, collected=10, error="", sightings=()):
+    def fake(argv, budget, project=""):
+        fake.calls.append({"argv": list(argv), "budget": budget, "project": project})
         return PipelineResult(
-            verdicts=dict(verdicts or {}), collected=collected, error=error
+            verdicts=dict(verdicts or {}),
+            collected=collected,
+            error=error,
+            sightings=list(sightings),
         )
 
     fake.calls = []
@@ -129,7 +134,7 @@ def test_projects_past_the_deadline_are_unreached_not_failed(space, quiet_build)
         checkout(space, name)
     clock = Clock()
 
-    def slow(argv, budget):
+    def slow(argv, budget, project=""):
         clock.advance(MIN_PROJECT_SECONDS)
         return PipelineResult(verdicts={"no_signal": 1})
 
@@ -461,3 +466,109 @@ def test_a_report_this_cannot_read_does_not_fail_the_run(tmp_path):
     script.write_text(f"print({json.dumps(json.dumps(payload))})")
     tested = run_pipeline([sys.executable, str(script)], 60)
     assert tested.collected == 0 and not tested.error
+
+
+def sighting(signature="abc123", project="alpha"):
+    return Sighting(
+        signature=signature,
+        exception_type="CrossHairInternal",
+        frame="crosshair/core.py:12",
+        message="symbolic while not tracing",
+        project=project,
+    )
+
+
+def test_a_run_records_the_crosshair_defects_it_saw(space, quiet_build):
+    checkout(space, "alpha")
+    report = drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        crosshair_version="0.0.111",
+        run=ran(sightings=[sighting()]),
+    )
+    assert [d.signature for d in report.defects.new] == ["abc123"]
+    assert [d.signature for d in load_defects(space.defects_path)] == ["abc123"]
+
+
+def test_a_second_run_does_not_report_a_known_defect_as_new(space, quiet_build):
+    checkout(space, "alpha")
+    for _ in range(2):
+        report = drive(
+            space,
+            FakeSandbox(),
+            ["alpha"],
+            deadline=9e9,
+            image="img",
+            crosshair_version="0.0.111",
+            run=ran(sightings=[sighting()]),
+        )
+    assert not report.defects.new
+    assert [d.signature for d in report.defects.still_present] == ["abc123"]
+
+
+def test_a_project_the_window_cut_off_does_not_clear_its_defects(space, quiet_build):
+    checkout(space, "alpha")
+    drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        crosshair_version="0.0.111",
+        run=ran(sightings=[sighting()]),
+    )
+    report = drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        crosshair_version="0.0.112",
+        run=ran(error="the deadline arrived while this project was running"),
+    )
+    assert not report.defects.gone, "a cut-off project was never looked at"
+    assert len(report.defects.unverified) == 1
+
+
+def test_a_defect_gone_on_a_new_version_is_reported(space, quiet_build):
+    checkout(space, "alpha")
+    drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        crosshair_version="0.0.111",
+        run=ran(sightings=[sighting()]),
+    )
+    report = drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        crosshair_version="0.0.112",
+        run=ran(),
+    )
+    assert [d.signature for d in report.defects.gone] == ["abc123"]
+
+
+def test_the_version_comes_from_what_the_build_resolved(space, monkeypatch):
+    checkout(space, "alpha")
+    monkeypatch.setattr(
+        driver,
+        "_build",
+        lambda s, sb, n, d, p, v: built(s, n, toolchain={"crosshair-tool": "0.0.999"}),
+    )
+    drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        run=ran(sightings=[sighting()]),
+    )
+    assert load_defects(space.defects_path)[0].first_version == "0.0.999"

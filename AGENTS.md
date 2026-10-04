@@ -73,5 +73,10 @@ These are not style preferences. Each cost something to learn.
   command has to be translated through the mount that holds it, or the
   command is told to look somewhere that exists only outside it.
 
+- **Absence is evidence only where the run looked.** A known CrossHair
+  defect counts as gone when every project that shows it ran to completion
+  *and* the version moved. A quiet run on the same version says nothing:
+  the search is not reproducible.
+
 - **No automated writes to third-party repositories.** Not rate-limited, not
   gated: no such path exists. The loop drafts, a human posts.

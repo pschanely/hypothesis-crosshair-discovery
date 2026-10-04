@@ -154,7 +154,7 @@ def test_a_manifest_from_another_version_is_not_read():
 
 def test_rebuilding_installs_the_pins():
     stored = recorded()
-    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED)])
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), ok(FREEZE)])
     done = rebuild(sandbox, stored, "/proj", "/proj/.venv")
     assert done.ready and done.collected == 41
     installed = sandbox.calls[1]["argv"]
@@ -163,7 +163,7 @@ def test_rebuilding_installs_the_pins():
 
 def test_rebuilding_leaves_the_toolchain_free_to_resolve():
     stored = recorded()
-    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED)])
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), ok(FREEZE)])
     rebuild(sandbox, stored, "/proj", "/proj/.venv")
     installed = sandbox.calls[1]["argv"]
     assert "hypothesis-crosshair" in installed
@@ -172,7 +172,7 @@ def test_rebuilding_leaves_the_toolchain_free_to_resolve():
 
 def test_rebuilding_carries_the_repairs_into_collection():
     stored = recorded(pytest_args=["-m", ""], env={"MPLBACKEND": "Agg"})
-    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED)])
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), ok(FREEZE)])
     rebuild(sandbox, stored, "/proj", "/proj/.venv")
     collected = sandbox.calls[2]
     assert collected["argv"][-2:] == ["-m", ""]
@@ -181,21 +181,23 @@ def test_rebuilding_carries_the_repairs_into_collection():
 
 def test_a_project_that_never_built_is_not_installed_on_rebuild():
     stored = recorded(repairs=[RUN_FROM_CHECKOUT])
-    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED)])
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), ok(FREEZE)])
     rebuild(sandbox, stored, "/proj", "/proj/.venv")
     assert "-e" not in sandbox.calls[1]["argv"]
 
 
 def test_a_project_that_built_is_installed_on_rebuild():
     stored = recorded()
-    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED)])
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), ok(FREEZE)])
     rebuild(sandbox, stored, "/proj", "/proj/.venv")
     assert "-e" in sandbox.calls[1]["argv"]
 
 
 def test_refused_pins_are_dropped_rather_than_fought_with():
     stored = recorded()
-    sandbox = FakeSandbox([ok(), fail(stderr="no solution"), ok(), ok(COLLECTED)])
+    sandbox = FakeSandbox(
+        [ok(), fail(stderr="no solution"), ok(), ok(COLLECTED), ok(FREEZE)]
+    )
     done = rebuild(sandbox, stored, "/proj", "/proj/.venv")
     assert done.ready and done.resolved_afresh
     assert "packaging==24.0" not in sandbox.calls[2]["argv"]
@@ -217,7 +219,7 @@ def test_a_rebuild_that_cannot_collect_fails():
 
 def test_a_changed_suite_is_reported_as_drift():
     stored = recorded()
-    sandbox = FakeSandbox([ok(), ok(), ok("9 tests collected")])
+    sandbox = FakeSandbox([ok(), ok(), ok("9 tests collected"), ok(FREEZE)])
     done = rebuild(sandbox, stored, "/proj", "/proj/.venv")
     assert done.ready and done.drifted
     assert "manifest says 41" in done.describe()
@@ -225,7 +227,7 @@ def test_a_changed_suite_is_reported_as_drift():
 
 def test_an_unchanged_suite_is_not_drift():
     stored = recorded()
-    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED)])
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), ok(FREEZE)])
     assert not rebuild(sandbox, stored, "/proj", "/proj/.venv").drifted
 
 
@@ -238,7 +240,7 @@ def test_a_failed_rebuild_is_not_reported_as_drift():
 
 def test_a_rebuilt_environment_collects_offline():
     stored = recorded()
-    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED)])
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), ok(FREEZE)])
     rebuild(sandbox, stored, "/proj", "/proj/.venv")
     assert sandbox.calls[1]["network"] is True
     assert sandbox.calls[2]["network"] is False
@@ -273,3 +275,19 @@ def test_the_closure_reads_a_real_environment():
     # pytest requires these on older interpreters only: conditional, but the
     # toolchain's own, so they stay in the closure whatever is running.
     assert "exceptiongroup" in found or "tomli" in found
+
+
+def test_a_rebuild_reports_the_toolchain_it_actually_resolved():
+    """The manifest records an older build's versions; the toolchain floats."""
+    stored = recorded()
+    stored.toolchain = {"crosshair-tool": "0.0.1"}
+    newer = FREEZE.replace("crosshair-tool==0.0.78", "crosshair-tool==0.0.112")
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), ok(newer)])
+    done = rebuild(sandbox, stored, "/proj", "/proj/.venv")
+    assert done.toolchain["crosshair-tool"] == "0.0.112"
+
+
+def test_a_rebuild_that_cannot_be_read_reports_no_toolchain():
+    stored = recorded()
+    sandbox = FakeSandbox([ok(), ok(), ok(COLLECTED), fail()])
+    assert rebuild(sandbox, stored, "/proj", "/proj/.venv").toolchain == {}
