@@ -43,6 +43,17 @@ CREATE TABLE IF NOT EXISTS work (
     detail      TEXT,
     PRIMARY KEY (run_id, kind, key)
 );
+CREATE TABLE IF NOT EXISTS failures (
+    run_id      TEXT NOT NULL,
+    nodeid      TEXT NOT NULL,
+    version     TEXT NOT NULL,
+    verdict     TEXT NOT NULL,
+    exception   TEXT NOT NULL,
+    frame       TEXT NOT NULL,
+    message     TEXT NOT NULL,
+    sample      TEXT NOT NULL,
+    PRIMARY KEY (run_id, nodeid, version)
+);
 CREATE TABLE IF NOT EXISTS triage (
     run_id      TEXT NOT NULL,
     signature   TEXT NOT NULL,
@@ -156,6 +167,54 @@ class Store:
     def record_verdicts(self, run_id: str, items: Iterable[Classification]) -> None:
         for item in items:
             self.record_verdict(run_id, item)
+
+    def record_failure(
+        self,
+        run_id: str,
+        nodeid: str,
+        version: str,
+        verdict: str,
+        exception: str,
+        frame: str,
+        message: str,
+        sample: str = "",
+    ) -> None:
+        """Keep what a failure looked like, not only what it was called.
+
+        A verdict says a test failed; the registry of known defects needs to
+        know whether two failures are the same one, and that is the frame and
+        the scrubbed message. Recorded as each test retires, so a run the
+        deadline cuts off still leaves what it saw.
+
+        The solver version is part of the key: the same test under a new
+        CrossHair is a different observation, and a run keeps its id across
+        both.
+        """
+        self._conn.execute(
+            "INSERT OR REPLACE INTO failures VALUES (?,?,?,?,?,?,?,?)",
+            (run_id, nodeid, version, verdict, exception, frame, message, sample),
+        )
+        self._conn.commit()
+
+    def failures(self, run_id: str, version: str = "") -> List[dict]:
+        """Failures a run recorded, however it ended.
+
+        Scoped to one solver version, because a run keeps its id across
+        windows: rows from the version before an upgrade describe what that
+        version did, and counting them would mean a defect could never be
+        seen to stop reproducing.
+        """
+        sql = (
+            "SELECT nodeid, version, verdict, exception, frame, message, sample "
+            "FROM failures WHERE run_id = ?"
+        )
+        args: List[Any] = [run_id]
+        if version:
+            sql += " AND version = ?"
+            args.append(version)
+        with closing(self._conn.cursor()) as cur:
+            cur.execute(sql + " ORDER BY nodeid", args)
+            return [dict(row) for row in cur.fetchall()]
 
     def verdicts(
         self, run_id: Optional[str] = None, kind: Optional[str] = None

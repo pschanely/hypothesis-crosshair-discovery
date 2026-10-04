@@ -2040,3 +2040,80 @@ records what some earlier build resolved, and the toolchain deliberately
 floats, so on a rebuild the recorded version is stale by construction.
 `rebuild` now reads the environment it just built and reports what it
 actually resolved, which is what the registry records.
+
+## B47. Pointing it at attrs, and the two bugs that found
+
+Running the registry against a project that actually breaks CrossHair was
+meant to be a demonstration. It found two faults instead, both of which had
+been quietly true for as long as the docker sandbox has existed.
+
+**attrs reproduces finding 4, seven times over.** Seven of its property
+tests raise `crosshair.util.CrossHairInternal: Numeric operation on
+symbolic while not tracing`. One defect, seven tests -- which is exactly
+the shape the registry exists to collapse, and exactly the shape that makes
+a per-test report unreadable.
+
+**A window never finishes attrs, so the report was never written.** The
+first window ran 44 of its 57 tests in 35 minutes and was cut off. Verdicts
+survived that, because they are recorded in the store as each test retires,
+but sightings were read from the pipeline's final JSON -- which a cut-off
+run never prints. The projects that produce the most defects are the slow
+ones, so the registry would have been blind to precisely the projects it
+exists for, permanently, not for one window.
+
+Failures are therefore recorded in the store as each test retires, the same
+way verdicts already are: the signature's exception, frame and scrubbed
+message, which is all the registry needs to tell two failures apart.
+
+**And the solver version was never recorded at all.** `environment_versions`
+runs the probe on the host, and under docker the solver's interpreter is a
+path inside the container -- `/work/.venv-ch/bin/python`, which does not
+exist on the host. Every version read as `unknown`. The live store proves
+it:
+
+```
+attrs-a602f78f {"python": "unknown", "crosshair": "unknown", "plugin": "unknown"}
+```
+
+That is the same host-versus-container fault as B45's four, one layer up,
+and it is the worst of them, because `unknown` is a usable value. It goes
+into the cache key. So every verdict ever recorded under docker was keyed
+to a solver nobody can name, and **a CrossHair release would have
+invalidated nothing** -- the next run would have served the old verdicts
+from cache. The regression suite that the whole second feedback loop rests
+on was not running.
+
+The probe now runs wherever the interpreter is.
+
+With all three fixed, attrs produced the registry's first real entry:
+
+```
+new  5536120df8aae1f4 suspected: crosshair.util.CrossHairInternal:
+     Numeric operation on symbolic while not tracing
+     (since 2026-10-04 on 0.0.110, 1 project(s))
+```
+
+The whole attrs suite: 1237 tests collected, 58 Hypothesis-driven, and
+10 `crosshair_crash`, 2 `crosshair_timeout`, 45 `no_signal`, 1
+`observer_effect` -- one defect reaching ten tests, which is the ratio the
+registry exists for. The recorded sample names the mechanism: CrossHair's
+`copyext` deepcopy calls attrs' `__getstate__`, which does
+`dict(self.metadata)` over a `ShellMutableMap`, and that reaches
+`numeric_binop` outside tracing.
+
+Its environment resolved CrossHair **0.0.110** where jmespath's resolved
+0.0.111, which is the argument for reading the version per environment
+rather than once per run.
+
+One blemish left: the signature's frame is empty, because frame extraction
+looks for the project's own frame and a crash inside the solver has none.
+Crashes are therefore grouped by message alone, which is right for this one
+and would merge two unrelated internals that happen to share a message.
+
+**A run keeps its id across windows**, which the version scoping then has
+to account for: rows written before an upgrade describe what the old solver
+did, and counting them would mean a defect could never be seen to stop
+reproducing. Failures are keyed by `(run, test, version)`, and a window
+reads only the version it is measuring. Where no version can be read,
+nothing is filtered rather than everything being hidden -- an unknown
+version should cost precision, not the whole report.

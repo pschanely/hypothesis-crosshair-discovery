@@ -125,27 +125,22 @@ class Changes:
         return lines
 
 
-def sightings_from(payload: dict, project: str) -> List[Sighting]:
-    """CrossHair's own failures in one pipeline report.
+def sightings_from(rows: Iterable[dict], project: str) -> List[Sighting]:
+    """CrossHair's own failures among the ones a run recorded.
 
-    A cluster counts when the classifier attributed any of its tests to
-    CrossHair. Triage is not consulted: it may not have run, and these
-    verdicts rest on the differential rather than on anyone's reading.
+    Read from the store rather than from a finished run's report, because
+    the projects that produce the most defects are the slow ones, and those
+    are the ones a window is most likely to cut off. A report arrives only
+    when a run finishes; these rows are written as each test retires.
     """
-    attributed = {
-        str(entry.get("nodeid"))
-        for entry in payload.get("classifications") or []
-        if str(entry.get("verdict")) in ATTRIBUTABLE
-    }
     found = []
-    for group in payload.get("clusters") or []:
-        nodeids = [str(n) for n in group.get("nodeids") or []]
-        if not attributed.intersection(nodeids):
+    for row in rows:
+        if str(row.get("verdict")) not in ATTRIBUTABLE:
             continue
         signature = Signature(
-            str(group.get("exception_type") or ""),
-            str(group.get("frame") or ""),
-            str(group.get("message") or ""),
+            str(row.get("exception") or ""),
+            str(row.get("frame") or ""),
+            str(row.get("message") or ""),
         )
         found.append(
             Sighting(
@@ -154,8 +149,8 @@ def sightings_from(payload: dict, project: str) -> List[Sighting]:
                 frame=signature.frame,
                 message=signature.message,
                 project=project,
-                sample=str(group.get("sample") or ""),
-                nodeids=nodeids,
+                sample=str(row.get("sample") or ""),
+                nodeids=[str(row.get("nodeid") or "")],
             )
         )
     return found

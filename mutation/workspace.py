@@ -28,6 +28,21 @@ SUITE = Suite(
             "",
         ),
         Mutation(
+            "a checkout with no manifest is not a project",
+            "        found = {stored.project for stored in self.manifests()}",
+            "        return sorted({stored.project for stored in self.manifests()})",
+        ),
+        Mutation(
+            "a manifest whose checkout is gone is not a project",
+            "        found = {stored.project for stored in self.manifests()}",
+            "        found = set()",
+        ),
+        Mutation(
+            "any directory counts as a checkout",
+            '            if os.path.isdir(os.path.join(self.path(CHECKOUTS), name, ".git")):',
+            "            if True:",
+        ),
+        Mutation(
             "a manifest with no repository clones from nowhere",
             "        if not stored.repo_url or stored.repo_url == UNKNOWN:",
             "        if False:",

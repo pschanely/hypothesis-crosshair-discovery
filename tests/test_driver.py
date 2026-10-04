@@ -14,7 +14,7 @@ from typing import Dict, List, Optional, Sequence
 import pytest
 
 from discovery import driver
-from discovery.defects import Sighting
+from discovery.cluster import Signature
 from discovery.defects import load as load_defects
 from discovery.driver import (
     BUILD,
@@ -36,6 +36,7 @@ from discovery.manifest import Manifest, Rebuilt
 from discovery.model import Classification, Outcome, Verdict
 from discovery.sandbox import ExecResult, Limits, Sandbox
 from discovery.store import Store
+from discovery.triage import signature_key
 from discovery.workspace import Workspace
 
 
@@ -99,14 +100,21 @@ def quiet_build(monkeypatch, space):
     return fake
 
 
-def ran(verdicts=None, collected=10, error="", sightings=()):
-    def fake(argv, budget, project=""):
-        fake.calls.append({"argv": list(argv), "budget": budget, "project": project})
+def ran(verdicts=None, collected=10, error="", failures=(), version="0.0.111"):
+    """A stand-in pipeline, which records what it saw the way the real one does."""
+
+    def fake(argv, budget):
+        fake.calls.append({"argv": list(argv), "budget": budget})
+        if failures:
+            argv = list(argv)
+            run_id = argv[argv.index("--resume") + 1]
+            with Store(argv[argv.index("--store") + 1]) as store:
+                for index, found in enumerate(failures):
+                    store.record_failure(run_id, f"t::{index}", version, **found)
         return PipelineResult(
             verdicts=dict(verdicts or {}),
             collected=collected,
             error=error,
-            sightings=list(sightings),
         )
 
     fake.calls = []
@@ -134,7 +142,7 @@ def test_projects_past_the_deadline_are_unreached_not_failed(space, quiet_build)
         checkout(space, name)
     clock = Clock()
 
-    def slow(argv, budget, project=""):
+    def slow(argv, budget):
         clock.advance(MIN_PROJECT_SECONDS)
         return PipelineResult(verdicts={"no_signal": 1})
 
@@ -468,14 +476,21 @@ def test_a_report_this_cannot_read_does_not_fail_the_run(tmp_path):
     assert tested.collected == 0 and not tested.error
 
 
-def sighting(signature="abc123", project="alpha"):
-    return Sighting(
-        signature=signature,
-        exception_type="CrossHairInternal",
-        frame="crosshair/core.py:12",
-        message="symbolic while not tracing",
-        project=project,
+def crash_signature(frame="crosshair/core.py:12"):
+    return signature_key(
+        Signature("CrossHairInternal", frame, "symbolic while not tracing")
     )
+
+
+def crashed(frame="crosshair/core.py:12"):
+    """A failure row of the shape the pipeline records."""
+    return {
+        "verdict": "crosshair_crash",
+        "exception": "CrossHairInternal",
+        "frame": frame,
+        "message": "symbolic while not tracing",
+        "sample": "Traceback...",
+    }
 
 
 def test_a_run_records_the_crosshair_defects_it_saw(space, quiet_build):
@@ -487,10 +502,12 @@ def test_a_run_records_the_crosshair_defects_it_saw(space, quiet_build):
         deadline=9e9,
         image="img",
         crosshair_version="0.0.111",
-        run=ran(sightings=[sighting()]),
+        run=ran(failures=[crashed()]),
     )
-    assert [d.signature for d in report.defects.new] == ["abc123"]
-    assert [d.signature for d in load_defects(space.defects_path)] == ["abc123"]
+    assert [d.signature for d in report.defects.new] == [crash_signature()]
+    assert [d.signature for d in load_defects(space.defects_path)] == [
+        crash_signature()
+    ]
 
 
 def test_a_second_run_does_not_report_a_known_defect_as_new(space, quiet_build):
@@ -503,10 +520,10 @@ def test_a_second_run_does_not_report_a_known_defect_as_new(space, quiet_build):
             deadline=9e9,
             image="img",
             crosshair_version="0.0.111",
-            run=ran(sightings=[sighting()]),
+            run=ran(failures=[crashed()]),
         )
     assert not report.defects.new
-    assert [d.signature for d in report.defects.still_present] == ["abc123"]
+    assert [d.signature for d in report.defects.still_present] == [crash_signature()]
 
 
 def test_a_project_the_window_cut_off_does_not_clear_its_defects(space, quiet_build):
@@ -518,7 +535,7 @@ def test_a_project_the_window_cut_off_does_not_clear_its_defects(space, quiet_bu
         deadline=9e9,
         image="img",
         crosshair_version="0.0.111",
-        run=ran(sightings=[sighting()]),
+        run=ran(failures=[crashed()]),
     )
     report = drive(
         space,
@@ -542,7 +559,7 @@ def test_a_defect_gone_on_a_new_version_is_reported(space, quiet_build):
         deadline=9e9,
         image="img",
         crosshair_version="0.0.111",
-        run=ran(sightings=[sighting()]),
+        run=ran(failures=[crashed()]),
     )
     report = drive(
         space,
@@ -551,9 +568,9 @@ def test_a_defect_gone_on_a_new_version_is_reported(space, quiet_build):
         deadline=9e9,
         image="img",
         crosshair_version="0.0.112",
-        run=ran(),
+        run=ran(version="0.0.112"),
     )
-    assert [d.signature for d in report.defects.gone] == ["abc123"]
+    assert [d.signature for d in report.defects.gone] == [crash_signature()]
 
 
 def test_the_version_comes_from_what_the_build_resolved(space, monkeypatch):
@@ -569,6 +586,49 @@ def test_the_version_comes_from_what_the_build_resolved(space, monkeypatch):
         ["alpha"],
         deadline=9e9,
         image="img",
-        run=ran(sightings=[sighting()]),
+        run=ran(failures=[crashed()], version="0.0.999"),
     )
     assert load_defects(space.defects_path)[0].first_version == "0.0.999"
+
+
+def test_a_failure_from_before_an_upgrade_does_not_count_as_still_present(
+    space, quiet_build
+):
+    """A run keeps its id across versions; its old rows describe the old one."""
+    checkout(space, "alpha")
+    drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        crosshair_version="0.0.111",
+        run=ran(failures=[crashed()], version="0.0.111"),
+    )
+    report = drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        crosshair_version="0.0.112",
+        run=ran(version="0.0.112"),
+    )
+    assert [d.signature for d in report.defects.gone] == [crash_signature()]
+
+
+def test_a_run_whose_version_could_not_be_read_still_reports_its_defects(
+    space, quiet_build
+):
+    """Filtering by a version nobody knows would hide every defect there is."""
+    checkout(space, "alpha")
+    report = drive(
+        space,
+        FakeSandbox(),
+        ["alpha"],
+        deadline=9e9,
+        image="img",
+        crosshair_version="",
+        run=ran(failures=[crashed()], version="unknown"),
+    )
+    assert [d.signature for d in report.defects.new] == [crash_signature()]
