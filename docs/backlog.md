@@ -1900,3 +1900,87 @@ And this finally exercises the rebuild path B43 could not. pydantic's
 manifest carries 22 pins -- `inline-snapshot`, `pytest-benchmark`,
 `py-cpuinfo2`, `dirty-equals` among them -- and rebuilding from it in a
 second environment collects 13427 again, with no drift and no pin refused.
+
+## B45. The driver, and four ways the container path had never worked
+
+The shape was agreed before it was built: the orchestrator stays on the
+host, every command it issues is its own container, and nothing needs a
+container that can reach a container runtime. `DockerSandbox` already did
+the per-command part. What was missing was the run: projects walked through
+restore, build and test, bounded by a deadline, with a report.
+
+Getting a daemon running in this session was worth more than the driver
+itself, because it turned out **the container path had never worked**. Four
+separate faults, none of which a unit test would have caught, because each
+one is about the difference between a path on the host and the same path
+inside a container.
+
+**The documented image cannot provision.** `--image python:3.12-slim` is
+the default everywhere, and `provision` runs `uv venv`. There is no uv in
+that image. There is now a `Dockerfile`, holding an interpreter, uv, and
+nothing of this project.
+
+**Host paths were passed to containerized commands.** `provision` created
+the virtual environment at the host path of `.venv-ch`, which inside the
+container landed in its own tmpfs and vanished with it; the next command
+could not find it. The same fault, one layer down, had the runner passing
+`--confcutdir`, `--rootdir`, `PYTHONPATH`, `HCD_REPORT` and the Hypothesis
+storage directory as host paths. `Sandbox.inside` now translates a path
+through whichever mount holds it, and refuses one that is under no mount at
+all -- which is the honest answer, since the container genuinely cannot see
+it.
+
+**The run root was not mounted.** It defaults to `.discovery/<id>` inside
+the project, so it usually is; a `--run-root` elsewhere was invisible, and
+the injected plugin with it. `DockerSandbox` takes extra mounts now.
+
+**Root cannot write the directories it creates.** A container runs as
+nobody unless the invoking user is someone else, and a directory root
+created is not writable by nobody, so the injected plugin could not write
+its report. Runs as a non-root user were never affected, which is exactly
+why this needed running rather than reading.
+
+**And a second window could not rebuild.** `uv venv` refuses a directory
+that already holds one, so the idempotence the whole workspace design rests
+on failed on its second use. Building an environment now replaces what is
+there: a run that added to whatever the last one left would stop being the
+environment its manifest describes.
+
+Two things the driver adds beyond the shape:
+
+**A deadline, not a list.** A project the window does not reach is reported
+as not reached, not as having found nothing, and one that needs less time
+than remains is not started at all. `--test-timeout` bounds what a single
+test may spend in the solver, which the pipeline's own default does not: at
+900 seconds one test can take a quarter of an hour of a window holding
+several projects.
+
+**A cut-off project keeps its work.** Each project runs under a run id
+derived from its name and its commit, so the verdicts it recorded before
+the deadline are read back from the store and the next window continues
+that run rather than repeating it.
+
+Two faults in the driver's own cut-off, both found by running it:
+
+`subprocess.run(timeout=...)` kills the pipeline but not the container
+clients it started, and those hold its pipes open, so reading its output
+blocks until they finish -- the deadline would hang rather than cut off.
+The pipeline runs in its own process group now and the group goes at once,
+which is the discipline `sandbox._spawn` already used for the same reason.
+
+And killing a container client does not stop its container: the daemon
+keeps it, and `--rm` only cleans up when it exits, which a wedged tracer
+never does. Two orphans from an earlier killed run were still burning CPU
+fifteen minutes later. Every container carries a `discovery-run` label now,
+and a run that is cut off reaps its own.
+
+Measured, in docker, on jmespath: a 20-minute window provisioned the
+environment, built a clean room beside it, and ran all 7 of its
+Hypothesis-driven tests -- 1 `crosshair_timeout`, 6 `no_signal`. A second
+window over the same commit read those verdicts back and finished in 12
+seconds instead of 20 minutes.
+
+The first of those two windows crashed after the tests finished, on
+`int()` of the pipeline's `collected`, which names the tests rather than
+counting them. One project's unreadable report took the whole run down, so
+a report this cannot read now counts as nothing rather than as a failure.

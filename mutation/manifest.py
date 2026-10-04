@@ -84,17 +84,17 @@ SUITE = Suite(
         ),
         Mutation(
             "the rebuild pins the toolchain it is meant to be measuring",
-            "    tools = toolchain_requirements(plugin or stored.plugin)",
+            "    tools = toolchain_requirements(stored.plugin if plugin is None else plugin)",
             "    tools = []",
         ),
         Mutation(
             "a project that never built is installed anyway",
-            '    project = ["-e", project_dir] if stored.installs_project else []',
-            '    project = ["-e", project_dir]',
+            '    project = ["-e", here] if stored.installs_project else []',
+            '    project = ["-e", here]',
         ),
         Mutation(
             "a project that built is left uninstalled",
-            '    project = ["-e", project_dir] if stored.installs_project else []',
+            '    project = ["-e", here] if stored.installs_project else []',
             "    project = []",
         ),
         Mutation(

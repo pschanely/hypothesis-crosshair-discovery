@@ -19,8 +19,10 @@ from typing import Dict, List, Optional, Sequence, Tuple
 from . import harness
 from .sandbox import Limits, Sandbox
 
-#: Builds a virtual environment. Overridable for an image without uv.
-VENV_ARGV = ("uv", "venv", "--quiet")
+#: Builds a virtual environment, replacing one already there. Building an
+#: environment means building it: a run that added to whatever the last run
+#: left would stop being the environment its manifest describes.
+VENV_ARGV = ("uv", "venv", "--quiet", "--clear")
 
 #: Installs into a named interpreter's environment.
 INSTALL_ARGV = ("uv", "pip", "install", "--quiet", "--python")
@@ -95,8 +97,12 @@ def plugin_argv(requirement: str) -> List[str]:
 
 
 def toolchain_requirements(plugin: str = DEFAULT_PLUGIN) -> List[str]:
-    """Install arguments for the packages under test."""
-    return [*BASE_PACKAGES, *plugin_argv(plugin)]
+    """Install arguments for the packages under test.
+
+    An empty requirement installs no plugin at all, which is what a clean
+    room is: the same environment with nothing of CrossHair's in it.
+    """
+    return [*BASE_PACKAGES, *(plugin_argv(plugin) if plugin else [])]
 
 
 def _collected_count(text: str) -> int:
@@ -152,10 +158,12 @@ def provision(
     result = Provisioned(project=project_dir)
     declared = harness.declared_requirements(project_dir)
     venv_dir = venv_dir or os.path.join(project_dir, ".venv-ch")
-    result.python = venv_python(venv_dir)
+    here = sandbox.inside(project_dir, project_dir)
+    result.python = venv_python(sandbox.inside(project_dir, venv_dir))
 
     made = sandbox.run(
-        list(VENV_ARGV) + [venv_dir, "--python", python_version],
+        list(VENV_ARGV)
+        + [sandbox.inside(project_dir, venv_dir), "--python", python_version],
         cwd=project_dir,
         network=True,
         limits=INSTALL_LIMITS,
@@ -166,7 +174,7 @@ def provision(
 
     everything = [*toolchain_requirements(plugin), *extra_packages]
     installed, detail = install(
-        sandbox, result.python, ["-e", project_dir, *everything], project_dir, {}
+        sandbox, result.python, ["-e", here, *everything], project_dir, {}
     )
     if not installed:
         # A suite that puts its own package on the path works without being

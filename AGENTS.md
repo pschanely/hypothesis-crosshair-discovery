@@ -67,5 +67,11 @@ These are not style preferences. Each cost something to learn.
   they require -- must stay free to resolve, or the next upgrade cannot be
   installed and the loop measures the previous release forever.
 
+- **The orchestrator runs on the host; every command it issues is a
+  container.** Nothing here needs a container that can reach a container
+  runtime, and the runtime socket is never mounted. A path handed to a
+  command has to be translated through the mount that holds it, or the
+  command is told to look somewhere that exists only outside it.
+
 - **No automated writes to third-party repositories.** Not rate-limited, not
   gated: no such path exists. The loop drafts, a human posts.

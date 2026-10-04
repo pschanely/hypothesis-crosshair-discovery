@@ -6,10 +6,10 @@ import os
 import pytest
 
 from discovery.runner import CollectionFailed, EnvSpec, Runner
-from discovery.sandbox import ExecResult
+from discovery.sandbox import ExecResult, Sandbox
 
 
-class FakeSandbox:
+class FakeSandbox(Sandbox):
     def __init__(self, returncode, report=None):
         self.returncode = returncode
         self.report = report
