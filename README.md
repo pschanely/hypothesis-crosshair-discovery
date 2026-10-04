@@ -36,6 +36,46 @@ findings are reported as `pending_validation` rather than claimed.
 the pipeline against code you already trust; never point it at a repository you
 have not read.
 
+### The workspace
+
+A run happens in a container that will be reclaimed. Everything worth keeping
+between runs lives in one directory, mounted into the container and named
+with `--workspace` or `DISCOVERY_WORKSPACE`:
+
+```
+workspace/
+  checkouts/      project source, at the commit a manifest pins
+  manifests/      how each project's environment was built
+  datasets/       inputs the operator supplies, such as a recorded index
+  reports/
+  store.db        verdicts and the work queue
+```
+
+Provisioning becomes idempotent with one:
+
+```
+discovery-provision --workspace /work pydantic hpack
+```
+
+The first run provisions and writes a manifest. A later container rebuilds
+from the manifest instead of rediscovering the same repairs, and
+`--refresh` provisions from scratch anyway.
+
+A manifest pins the project's environment and leaves the packages under test
+-- `hypothesis`, `pytest`, `crosshair-tool`, `hypothesis-crosshair` and
+everything they require -- free to resolve, because those are what a run is
+measuring. A rebuild that collects a different number of tests than the
+manifest recorded reports **drift** rather than running on; pins the new
+toolchain refuses are dropped and reported as **resolved afresh**.
+
+A manifest records the repository and commit as well, so a container that
+lost its checkout restores it from the manifest alone.
+
+A recorded index mounted at `datasets/hypothesis_nodes.json` is picked up by
+`discovery-probe --workspace /work` when `--index` names none. It is not
+vendored: it is a snapshot that goes stale, and refreshing it should not need
+a release.
+
 ### Resuming, and the verdict cache
 
 With `--store` and `--per-test`, each test is claimed from the store before it
@@ -227,6 +267,8 @@ defect.
 | Module | Role |
 | --- | --- |
 | `provision.py` | Builds an environment per project, repairing the harness as needed |
+| `manifest.py` | Records what an environment took, and rebuilds it in a later container |
+| `workspace.py` | The persistent directory: checkouts, manifests, datasets, the store |
 | `pypi.py` | Ranks package names from PyPI metadata, before anything is cloned |
 | `known_repos.py` | A recorded index of repositories already known to carry tests |
 | `probe.py` | Shallow-clones a candidate, surveys it, and deletes the checkout |

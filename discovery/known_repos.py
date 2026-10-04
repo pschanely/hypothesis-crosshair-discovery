@@ -20,14 +20,10 @@ from typing import Dict, List, Sequence
 
 from .candidates import OPAQUE_IMPORTS
 from .probe import Candidate
+from .provision import TOOLCHAIN
 from .pypi import requirement_name
 
 SOURCE = "recorded-index"
-
-#: Supplied by provisioning itself, so a recorded pin must never fight it.
-PROVISIONED_SEPARATELY = frozenset(
-    {"hypothesis", "pytest", "crosshair-tool", "hypothesis-crosshair"}
-)
 
 #: Hosts an entry's name can be resolved against when it carries no URL.
 DEFAULT_HOST = "https://github.com"
@@ -51,7 +47,7 @@ class KnownRepo:
         seen = []
         for line in self.requirements:
             name = requirement_name(line)
-            if name and name not in PROVISIONED_SEPARATELY and name not in seen:
+            if name and name not in TOOLCHAIN and name not in seen:
                 seen.append(name)
         return seen
 

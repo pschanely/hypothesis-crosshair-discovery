@@ -62,5 +62,10 @@ These are not style preferences. Each cost something to learn.
 - **Rejecting a candidate needs a fact.** Admitting a dud costs one run;
   rejecting a good project costs findings nobody ever counts. Only an
   absence of property tests rejects. Everything else is a rank.
+- **A manifest pins the project, never the toolchain.** The packages a run
+  is measuring -- Hypothesis, pytest, CrossHair, the plugin, and everything
+  they require -- must stay free to resolve, or the next upgrade cannot be
+  installed and the loop measures the previous release forever.
+
 - **No automated writes to third-party repositories.** Not rate-limited, not
   gated: no such path exists. The loop drafts, a human posts.

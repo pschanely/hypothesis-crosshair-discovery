@@ -24,7 +24,7 @@ SUITE = Suite(
         ),
         Mutation(
             "what provisioning supplies is taken from the index too",
-            "            if name and name not in PROVISIONED_SEPARATELY and name not in seen:",
+            "            if name and name not in TOOLCHAIN and name not in seen:",
             "            if name and name not in seen:",
         ),
         Mutation(

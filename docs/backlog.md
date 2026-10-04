@@ -1764,3 +1764,81 @@ and if collection then succeeds the run is recorded as `run-from-checkout`.
 Both failures are the same shape as everything else in stage 6 -- the design
 assumed installation succeeds or the project is unusable, and reality has a
 third case. Encoding it took one fallback and three tests.
+
+## B43. The workspace, and what a manifest is allowed to pin
+
+A run happens in a container that gets reclaimed. Everything stage 6 built
+assumed otherwise: `provision` discovers repairs by failing and retrying,
+costs minutes per project, and leaves the result in a `.venv-ch` inside a
+checkout that disappears with the container. A scheduled loop that
+rediscovers the same four repairs every night is not a loop, it is the same
+run repeated.
+
+So a provisioned environment is now written down, and the workspace is the
+directory that outlives the container: `checkouts/`, `manifests/`,
+`datasets/`, `reports/`, and `store.db`. Mount one and a later container
+resumes; mount nothing and nothing changes from before.
+
+**The question a manifest has to answer is what to pin.** Pin nothing and a
+rebuild is a fresh resolution, so a failure cannot be attributed: the
+project's dependencies moved, or CrossHair did, and the manifest cannot say
+which. Pin everything and the next CrossHair release will not install,
+which defeats the only reason the loop exists.
+
+The split follows from what the run is measuring. The toolchain --
+`hypothesis`, `pytest`, `crosshair-tool`, `hypothesis-crosshair` -- is the
+independent variable and must stay free. Everything else is noise to be held
+still. That is nearly right, and the remaining step is the one that bites:
+pinning `z3-solver==4.12.6.0` blocks a CrossHair upgrade just as surely as
+pinning CrossHair does. So the pins are the frozen environment *minus the
+toolchain's transitive closure*, read from the installed metadata of the
+environment that was observed to collect.
+
+The closure walk over-approximates on purpose: letting one extra package
+float costs a little reproducibility, while pinning one the toolchain needs
+costs the upgrade. That is the asymmetry that decides it, the same shape as
+the candidate-rejection rule in B35.
+
+**Measuring it showed the first version over-approximated far too much.**
+Ignoring markers entirely put 68 names in the closure of jmespath's
+18-package environment, because CrossHair and Hypothesis name their dev and
+test extras in the same metadata field: `django`, `pandas`, `numpy`,
+`redis`, `sphinx`, `black`. A project whose own tests need numpy would
+therefore never have had numpy pinned. Skipping requirements guarded by an
+`extra ==` marker, and keeping every other conditional, cuts the closure to
+24 -- CrossHair's real runtime, `pygls` and `lsprotocol` included.
+
+| environment | installed | closure | pinned |
+| --- | --- | --- | --- |
+| jmespath | 18 | 24 | 0 |
+| pydantic | 24 | 24 | 6 |
+
+jmespath pins nothing because its environment *is* the toolchain: it has no
+third-party test dependency. pydantic's six include `pytest-benchmark` and
+`py-cpuinfo2`, which the first version dropped -- and `pytest-benchmark` is
+a package harness repair installs, so the bug would have unpinned exactly
+what repair had just been needed to add.
+
+**A rebuild checks itself.** The commit is pinned, so the suite cannot change
+underneath it; if the rebuilt environment collects a different number of
+tests than the manifest recorded, something moved that the manifest does not
+describe, and `Rebuilt.drifted` says so rather than the run quietly
+proceeding against a different suite. Pins the new toolchain refuses are
+dropped and the project side is resolved afresh, recorded as
+`resolved_afresh`: a rebuild that stops is worse than one that reports what
+it had to give up.
+
+**The dataset goes in the workspace, not in the package.** `hypothesis_nodes.json`
+is 3.5 MB of snapshot that goes stale; vendoring it would mean a release to
+refresh it. `datasets/hypothesis_nodes.json` is found automatically when
+`--index` names nothing, so the operator supplies it by mounting it.
+
+End to end on jmespath: cloned, provisioned (999 tests collected), manifest
+written, and rebuilt from the manifest in a second environment -- 999 again,
+no drift, no re-resolution.
+
+Two pieces of unobservable code turned up while writing the mutation suites,
+both the same kind as B36's. `safe_name` had three guards where the second
+was subsumed by the third on every platform this runs on, and a
+`SEPARATORS` tuple generalised over `os.altsep` that is `None` here. Both
+collapsed into one condition that every mutation of reaches a test.

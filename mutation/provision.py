@@ -19,13 +19,13 @@ SUITE = Suite(
         ),
         Mutation(
             "the plugin is never installed",
-            "    everything = [*BASE_PACKAGES, *plugin_argv(plugin), *extra_packages]",
+            "    everything = [*toolchain_requirements(plugin), *extra_packages]",
             "    everything = [*BASE_PACKAGES, *extra_packages]",
         ),
         Mutation(
             "extra packages are dropped",
-            "    everything = [*BASE_PACKAGES, *plugin_argv(plugin), *extra_packages]",
-            "    everything = [*BASE_PACKAGES, *plugin_argv(plugin)]",
+            "    everything = [*toolchain_requirements(plugin), *extra_packages]",
+            "    everything = [*toolchain_requirements(plugin)]",
         ),
         Mutation(
             "a failed environment goes on to install",
@@ -79,13 +79,13 @@ SUITE = Suite(
         ),
         Mutation(
             "a failed build is a failed provisioning",
-            "        without_project, retry_detail = _install(\n            sandbox, result.python, everything, project_dir, {}\n        )\n        if not without_project:",
+            "        without_project, retry_detail = install(\n            sandbox, result.python, everything, project_dir, {}\n        )\n        if not without_project:",
             "        if True:",
         ),
         Mutation(
             "the retry installs the project again",
-            "        without_project, retry_detail = _install(\n            sandbox, result.python, everything, project_dir, {}\n        )",
-            '        without_project, retry_detail = _install(\n            sandbox, result.python, ["-e", project_dir, *everything], project_dir, {}\n        )',
+            "        without_project, retry_detail = install(\n            sandbox, result.python, everything, project_dir, {}\n        )",
+            '        without_project, retry_detail = install(\n            sandbox, result.python, ["-e", project_dir, *everything], project_dir, {}\n        )',
         ),
         Mutation(
             "running from the checkout is not recorded",

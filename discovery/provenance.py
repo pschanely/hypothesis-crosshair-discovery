@@ -42,6 +42,20 @@ def project_commit(project_dir: str) -> str:
     return done.stdout.strip() if done.returncode == 0 else UNKNOWN
 
 
+def remote_url(project_dir: str) -> str:
+    """The repository the checkout was cloned from, or ``UNKNOWN``."""
+    try:
+        done = subprocess.run(
+            ["git", "-C", project_dir, "remote", "get-url", "origin"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return UNKNOWN
+    return done.stdout.strip() if done.returncode == 0 else UNKNOWN
+
+
 def environment_versions(python_argv: List[str]) -> Dict[str, str]:
     """CrossHair, plugin and Python versions in the solver arm's interpreter."""
     blank = {"python": UNKNOWN, "crosshair": UNKNOWN, "plugin": UNKNOWN}
