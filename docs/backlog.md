@@ -1984,3 +1984,59 @@ The first of those two windows crashed after the tests finished, on
 `int()` of the pipeline's `collected`, which names the tests rather than
 counting them. One project's unreadable report took the whole run down, so
 a report this cannot read now counts as nothing rather than as a failure.
+
+## B46. The other writeback, and why it is the one that can close itself
+
+Two feedback loops were agreed in the scheduling design, and only the
+trophy one had been thought about. The CrossHair one turns out to be more
+useful per unit of effort, and it is a different mechanism rather than the
+same one pointed elsewhere.
+
+**It is the common case.** The only real run so far produced 1
+`crosshair_timeout`, 6 `no_signal` and no trophies. A loop that learns only
+from trophies learns almost nothing per night.
+
+**Without memory the report stops being worth reading.** `outcomes.route`
+already had a `CrossHairDefect` destination, but nothing persisted it: the
+`triage` table is keyed `(run_id, signature)` and dies with the run. The
+same defect would be rediscovered in every project every night and reported
+as new each time. That is what kills a scheduled loop -- not missing
+features, a report nobody can skim.
+
+**And it can close itself.** A verdict is cached under the CrossHair
+version that produced it, so a release invalidates every one and the next
+window re-tests every known defect. A defect that stops reproducing is
+evidence the fix landed, obtained without asking anyone. The human input
+needed is the *attribution* -- which issue this is -- never the resolution.
+
+| | trophies | CrossHair defects |
+| --- | --- | --- |
+| what a person must supply | the outcome: did the maintainer accept it | the attribution: which known defect this is |
+| can the loop settle it? | no | yes, a version bump re-tests it |
+| how often | rare | every night, every project |
+
+The registry is a file in the workspace rather than a table, because a
+person writes in it. A run records signature, dates, versions and projects;
+a person writes `status`, `issue` and `note`, and a run never overwrites
+those or removes an entry.
+
+**What counts as CrossHair's** is decided by the classifier, not by triage,
+which may not have run: a `crosshair_false_positive` is a failure the clean
+room did not reproduce and a `crosshair_crash` is the solver failing
+outright. A `crosshair_timeout` is not a defect -- it says the search was
+hard, which is a fact about the problem. Putting timeouts in the registry
+would have filled it with the one verdict the real run produced most.
+
+**Absence is the part that is easy to get wrong.** Two conditions have to
+hold before a defect counts as gone: every project that shows it ran to
+completion, and the version moved. A project the deadline cut off has not
+tested anything, and a quiet run on the same version says nothing because
+the search is not reproducible -- the same reason a single `no_signal`
+never settles anything. Everything else is reported as unverified rather
+than quietly dropped.
+
+Getting the toolchain version right needed one fix of its own. The manifest
+records what some earlier build resolved, and the toolchain deliberately
+floats, so on a rebuild the recorded version is stale by construction.
+`rebuild` now reads the environment it just built and reports what it
+actually resolved, which is what the registry records.

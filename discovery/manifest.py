@@ -184,6 +184,17 @@ def pins_for(requirements: Sequence[str], closure: Sequence[str]) -> List[str]:
     return [line for line in requirements if requirement_name(line) not in excluded]
 
 
+def toolchain_versions(requirements: Sequence[str]) -> Dict[str, str]:
+    """Versions of the packages under test, as the environment resolved them."""
+    by_name = {requirement_name(line): line for line in requirements}
+    found = {}
+    for name in sorted(TOOLCHAIN):
+        line = by_name.get(name)
+        if line:
+            found[name] = line.split("==", 1)[1]
+    return found
+
+
 def record(
     sandbox: Sandbox,
     built: Provisioned,
@@ -199,13 +210,7 @@ def record(
     """Describe a provisioned environment by reading what it resolved to."""
     requirements = frozen_requirements(sandbox, built.python, built.project)
     closure = toolchain_closure(sandbox, built.python, built.project)
-    versions = dict(toolchain or {})
-    if not versions:
-        by_name = {requirement_name(line): line for line in requirements}
-        for name in sorted(TOOLCHAIN):
-            line = by_name.get(name)
-            if line:
-                versions[name] = line.split("==", 1)[1]
+    versions = dict(toolchain or {}) or toolchain_versions(requirements)
     return Manifest(
         project=project,
         repo_url=repo_url,
@@ -234,6 +239,10 @@ class Rebuilt:
     #: Set when the pins could not be installed and the project side was
     #: resolved afresh. The environment is usable; the manifest is stale.
     resolved_afresh: bool = False
+    #: Versions this build resolved the toolchain to. The manifest records
+    #: what some earlier build resolved, and the toolchain floats, so only
+    #: this says what the run is actually measuring.
+    toolchain: Dict[str, str] = field(default_factory=dict)
 
     @property
     def ready(self) -> bool:
@@ -319,4 +328,7 @@ def rebuild(
         result.error = f"collection failed: {text.strip()[-300:]}"
         return result
     result.collected = count
+    result.toolchain = toolchain_versions(
+        frozen_requirements(sandbox, result.python, project_dir)
+    )
     return result

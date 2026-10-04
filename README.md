@@ -99,6 +99,37 @@ The image is the one in `Dockerfile`: an interpreter and uv, and nothing of
 this project, because the orchestrator stays on the host and only ever runs
 commands inside. Behind a TLS-inspecting proxy, add your CA to it.
 
+### Known CrossHair defects
+
+A defect in CrossHair is found again in every project that exercises the
+same code, every night. `crosshair-defects.json` in the workspace is where
+the loop remembers them, so a run can say what is **new**:
+
+```
+  new      a1b2c3d4e5f6 suspected: CrossHairInternal at core.py:812: ... (since 2026-10-04 on 0.0.111, 2 project(s))
+  gone     9f8e7d6c5b4a gone since 0.0.112: ValueError at re_parse.py:91: ...
+  present  3c2b1a0f9e8d filed [.../issues/412]: TypeError at ... (since 2026-09-02 on 0.0.109, 5 project(s))
+```
+
+A cluster is CrossHair's on the classifier's evidence alone -- a
+`crosshair_false_positive` is a failure the clean room did not reproduce,
+and a `crosshair_crash` is the solver failing outright. A
+`crosshair_timeout` or a `no_signal` is not: those say the search was hard,
+which is a fact about the problem rather than a defect.
+
+The loop writes what it saw. A person writes the `status`, the `issue` it
+was filed as, and any `note`, and a run never overwrites those or removes
+an entry.
+
+**A defect only counts as gone when the run actually looked.** Verdicts are
+cached under the CrossHair version that produced them, so a release
+invalidates them and the next window re-tests every known defect -- that is
+what lets this loop close itself without anyone's opinion. But absence is
+only evidence where every project that shows the defect ran to completion
+*and* the version has moved. A quiet run on the same version says nothing,
+because the search is not reproducible. Anything else is reported as
+unverified.
+
 A recorded index mounted at `datasets/hypothesis_nodes.json` is picked up by
 `discovery-probe --workspace /work` when `--index` names none. It is not
 vendored: it is a snapshot that goes stale, and refreshing it should not need
@@ -302,6 +333,7 @@ defect.
 | Module | Role |
 | --- | --- |
 | `driver.py` | One run: each project through its phases, bounded by a deadline |
+| `defects.py` | What is already known to be wrong with CrossHair, and whether it still is |
 | `provision.py` | Builds an environment per project, repairing the harness as needed |
 | `manifest.py` | Records what an environment took, and rebuilds it in a later container |
 | `workspace.py` | The persistent directory: checkouts, manifests, datasets, the store |

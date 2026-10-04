@@ -25,6 +25,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Sequence
 
+from . import defects as defects_mod
 from .manifest import CLEAN_ROOM, Manifest, Rebuilt, rebuild, record
 from .provenance import project_commit, remote_url
 from .provision import DEFAULT_PLUGIN, provision
@@ -94,6 +95,8 @@ class RunReport:
     #: Projects the deadline arrived before. Not failures.
     unreached: List[str] = field(default_factory=list)
     seconds: float = 0.0
+    #: What this run did to the registry of known CrossHair defects.
+    defects: defects_mod.Changes = field(default_factory=defects_mod.Changes)
 
     @property
     def verdicts(self) -> Dict[str, int]:
@@ -111,6 +114,12 @@ class RunReport:
             "verdicts": self.verdicts,
             "unreached": list(self.unreached),
             "attempts": [vars(attempt) for attempt in self.attempts],
+            "defects": {
+                "new": [vars(d) for d in self.defects.new],
+                "gone": [vars(d) for d in self.defects.gone],
+                "still_present": [d.signature for d in self.defects.still_present],
+                "unverified": [d.signature for d in self.defects.unverified],
+            },
         }
 
     def describe(self) -> List[str]:
@@ -127,6 +136,7 @@ class RunReport:
             )
         for name, count in sorted(self.verdicts.items()):
             lines.append(f"  {count} {name}")
+        lines.extend(self.defects.describe())
         return lines
 
 
@@ -137,6 +147,8 @@ class PipelineResult:
     verdicts: Dict[str, int] = field(default_factory=dict)
     collected: int = 0
     error: str = ""
+    #: CrossHair's own failures, for the registry of known defects.
+    sightings: List[defects_mod.Sighting] = field(default_factory=list)
 
 
 def project_run_id(project: str, commit: str) -> str:
@@ -216,7 +228,9 @@ def _collected(payload: dict) -> int:
         return 0
 
 
-def run_pipeline(argv: Sequence[str], budget: float) -> PipelineResult:
+def run_pipeline(
+    argv: Sequence[str], budget: float, project: str = ""
+) -> PipelineResult:
     """Run one project's pipeline, reading the verdicts it reports.
 
     It runs as its own process group so that a pipeline which dies takes
@@ -250,7 +264,11 @@ def run_pipeline(argv: Sequence[str], budget: float) -> PipelineResult:
     for entry in payload.get("classifications") or []:
         name = str(entry.get("verdict"))
         counted[name] = counted.get(name, 0) + 1
-    return PipelineResult(verdicts=counted, collected=_collected(payload))
+    return PipelineResult(
+        verdicts=counted,
+        collected=_collected(payload),
+        sightings=defects_mod.sightings_from(payload, project),
+    )
 
 
 def verdicts_recorded(store_path: str, run_id: str) -> Dict[str, int]:
@@ -297,7 +315,32 @@ def _build(
         plugin=plugin,
     )
     space.write_manifest(written)
-    return Rebuilt(manifest=written, python=built.python, collected=built.collected)
+    return Rebuilt(
+        manifest=written,
+        python=built.python,
+        collected=built.collected,
+        toolchain=dict(written.toolchain),
+    )
+
+
+def _record_defects(
+    space: Workspace,
+    report: RunReport,
+    seen: Sequence[defects_mod.Sighting],
+    version: str,
+) -> defects_mod.Changes:
+    """Fold this run's sightings into the registry and write it back.
+
+    Only projects that finished count as looked at: a project the deadline
+    cut off says nothing about whether a defect it used to show is gone.
+    """
+    covered = {a.project for a in report.attempts if a.ok and a.phase == TEST}
+    registry, changes = defects_mod.update(
+        defects_mod.load(space.defects_path), seen, covered=covered, version=version
+    )
+    if registry:
+        defects_mod.save(space.defects_path, registry)
+    return changes
 
 
 def drive(
@@ -310,14 +353,16 @@ def drive(
     plugin: str = DEFAULT_PLUGIN,
     python_version: str = "3.12",
     clean_room: bool = False,
+    crosshair_version: str = "",
     pipeline_args: Sequence[str] = (),
-    run: Optional[Callable[[Sequence[str], float], PipelineResult]] = None,
+    run: Optional[Callable[..., PipelineResult]] = None,
     now: Callable[[], float] = time.time,
 ) -> RunReport:
     """Take each project as far as the deadline allows, and report."""
     run = run or run_pipeline
     report = RunReport(run_id=uuid.uuid4().hex[:12], started_at=now())
     space.prepare()
+    seen: List[defects_mod.Sighting] = []
 
     for index, name in enumerate(projects):
         if deadline - now() < MIN_PROJECT_SECONDS:
@@ -345,6 +390,9 @@ def drive(
         attempt.collected = built.collected
         attempt.drifted = built.drifted
         attempt.resolved_afresh = built.resolved_afresh
+        crosshair_version = crosshair_version or built.toolchain.get(
+            "crosshair-tool", ""
+        )
         if not built.ready:
             attempt.error = built.error
             attempt.seconds = now() - started
@@ -379,6 +427,7 @@ def drive(
                 extra=pipeline_args,
             ),
             deadline - now(),
+            name,
         )
         # A run the deadline cut off still recorded what it reached, and the
         # store is where that is, so the report counts from there either way.
@@ -389,7 +438,9 @@ def drive(
         )
         attempt.error = tested.error
         attempt.seconds = now() - started
+        seen.extend(tested.sightings)
 
+    report.defects = _record_defects(space, report, seen, crosshair_version)
     report.seconds = now() - report.started_at
     return report
 

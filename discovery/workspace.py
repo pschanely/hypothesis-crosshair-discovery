@@ -32,6 +32,10 @@ REPORTS = "reports"
 
 STORE_NAME = "store.db"
 
+#: Known CrossHair and plugin defects. Kept beside the store rather than in
+#: it because a person writes in it: what a defect was filed as, and why.
+DEFECTS_NAME = "crosshair-defects.json"
+
 #: The recorded index, looked for under ``datasets`` when none is named.
 DATASET_NAME = "hypothesis_nodes.json"
 
@@ -114,6 +118,11 @@ class Workspace:
     @property
     def store_path(self) -> str:
         return self.path(STORE_NAME)
+
+    @property
+    def defects_path(self) -> str:
+        """The registry of known CrossHair defects, which a person edits."""
+        return self.path(DEFECTS_NAME)
 
     def dataset(self, name: str = DATASET_NAME) -> Optional[str]:
         """An operator-supplied input file, if it was mounted."""
